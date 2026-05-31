@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent]
+labels: [implemented]
 ---
 
 # Walking skeleton: project scaffold + identity audit to JSON
@@ -34,23 +34,23 @@ msgraph-sdk) and ADR-0002 (envelope + failure tiers).
 
 ## Acceptance criteria
 
-- [ ] `pyproject.toml` renamed to `service-principal-audit` with a real
+- [x] `pyproject.toml` renamed to `service-principal-audit` with a real
       description, `azure-identity` + `msgraph-sdk` dependencies, and a `sp-audit`
       console script entry point.
-- [ ] Source lives under `src/sp_audit/`; Terraform code (`--state-file`,
+- [x] Source lives under `src/sp_audit/`; Terraform code (`--state-file`,
       `parse_terraform_state`) is gone.
-- [ ] ruff format + lint and `ty` strict run via a working `.pre-commit-config.yaml`
+- [x] ruff format + lint and `ty` strict run via a working `.pre-commit-config.yaml`
       (`ty` as a `repo: local` hook).
-- [ ] `sp-audit --object-id <id>` fails fast with a clear, non-zero exit when not
+- [x] `sp-audit --object-id <id>` fails fast with a clear, non-zero exit when not
       logged in OR when a Graph token cannot be acquired, before any collection.
-- [ ] On success it writes a `{ meta, servicePrincipals }` JSON document; `meta`
+- [x] On success it writes a `{ meta, servicePrincipals }` JSON document; `meta`
       contains `generatedAt`, `tenantId`, `selection`, `toolVersion`, `runErrors`;
       `signedInUser` is absent.
-- [ ] An SP is resolved by object id, falling back to `appId eq` only on 404; the
+- [x] An SP is resolved by object id, falling back to `appId eq` only on 404; the
       record carries objectId, appId, displayName, tags, and a nullable
       `application`.
-- [ ] `servicePrincipals` is sorted by display name; the run exits 0.
-- [ ] Unit tests cover `report` (envelope shape, sort, meta keys), the
+- [x] `servicePrincipals` is sorted by display name; the run exits 0.
+- [x] Unit tests cover `report` (envelope shape, sort, meta keys), the
       object-id→record mapping, and the `models` shapes type-check under `ty`.
 
 ## Blocked by
