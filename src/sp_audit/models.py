@@ -7,7 +7,7 @@ rather than leaving it aspirational.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class ApplicationRecord(TypedDict):
@@ -33,9 +33,15 @@ class ServicePrincipalRecord(TypedDict):
 
 
 class Selection(TypedDict):
-    """How the audited set was chosen for this run."""
+    """How the audited set was chosen for this run.
+
+    `objectIds` is the resolved selection set (always present). `tag` records the
+    tag filter when the set was chosen via `--tag`; it is absent for the
+    id-driven paths (`--object-id`/`--ids-file`).
+    """
 
     objectIds: list[str]
+    tag: NotRequired[str]
 
 
 class Meta(TypedDict):

@@ -26,9 +26,18 @@ from msgraph.generated.service_principals.service_principals_request_builder imp
 
 from .models import ApplicationRecord, ServicePrincipalRecord
 
-# Unified $select so SP-side fields are never path-dependent across the two
-# resolution routes (by id vs appId-eq fallback).
-SP_SELECT = ["id", "displayName", "appId", "tags"]
+# Unified $select so SP-side fields are never path-dependent across the
+# selection routes (by object id, appId-eq fallback, and tag query). Every SP
+# enters the per-SP fan-out with the same baseline, including the credential
+# fields, so SP-side credentials are never path-dependent.
+SP_SELECT = [
+    "id",
+    "displayName",
+    "appId",
+    "tags",
+    "passwordCredentials",
+    "keyCredentials",
+]
 APP_SELECT = ["id", "displayName", "appId"]
 
 
@@ -118,14 +127,57 @@ async def _resolve_application(
     return matches[0] if matches else None
 
 
+async def _record_with_application(
+    client: GraphServiceClient, sp: ServicePrincipal
+) -> ServicePrincipalRecord:
+    """Attach the related Application (if any) and map to a record."""
+    application: Application | None = None
+    if sp.app_id:
+        application = await _resolve_application(client, sp.app_id)
+    return sp_record_from_graph(sp, application)
+
+
 async def collect_service_principal(
     client: GraphServiceClient, object_id: str
 ) -> ServicePrincipalRecord:
     """Collect one Service Principal's identity and attached Application."""
     sp = await _resolve_service_principal(client, object_id)
+    return await _record_with_application(client, sp)
 
-    application: Application | None = None
-    if sp.app_id:
-        application = await _resolve_application(client, sp.app_id)
 
-    return sp_record_from_graph(sp, application)
+async def select_by_tag(
+    client: GraphServiceClient, tag: str
+) -> list[ServicePrincipal]:
+    """Select Service Principals by tag, paging through all results.
+
+    Queries `tags/any(c:c eq '{tag}')` with OData single-quote escaping and
+    follows `@odata.nextLink` until the result set is exhausted. Requests the
+    unified `$select` so tag-selected SPs share the by-id baseline.
+    """
+    escaped = tag.replace("'", "''")
+    config = RequestConfiguration(
+        query_parameters=ServicePrincipalsRequestBuilder.ServicePrincipalsRequestBuilderGetQueryParameters(
+            filter=f"tags/any(c:c eq '{escaped}')",
+            select=SP_SELECT,
+        )
+    )
+    selected: list[ServicePrincipal] = []
+    page = await client.service_principals.get(request_configuration=config)
+    while page is not None:
+        if page.value:
+            selected.extend(page.value)
+        next_link = page.odata_next_link
+        if not next_link:
+            break
+        page = await client.service_principals.with_url(next_link).get()
+    return selected
+
+
+async def collect_by_tag(
+    client: GraphServiceClient, tag: str
+) -> list[ServicePrincipalRecord]:
+    """Collect every Service Principal carrying `tag` into records."""
+    return [
+        await _record_with_application(client, sp)
+        for sp in await select_by_tag(client, tag)
+    ]
