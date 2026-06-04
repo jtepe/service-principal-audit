@@ -17,9 +17,10 @@ from azure.identity.aio import AzureCliCredential
 from msgraph import GraphServiceClient
 
 from .auth import GRAPH_SCOPE, PreconditionError, verify_preconditions
-from .entra import collect_service_principal
+from .entra import collect_by_tag, collect_service_principal
 from .models import Selection, ServicePrincipalRecord
 from .report import build_report
+from .selection_parse import merge_object_ids, parse_ids_file
 
 DEFAULT_OUTPUT = "audit-report.json"
 
@@ -28,17 +29,35 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="sp-audit",
         description=(
-            "Audit an Entra service principal across the directory plane and "
+            "Audit Entra service principals across the directory plane and "
             "write a JSON Audit Report."
         ),
     )
     parser.add_argument(
         "--object-id",
-        required=True,
+        action="append",
+        dest="object_ids",
+        default=[],
         metavar="ID",
         help=(
-            "Object id of the service principal to audit "
-            "(appId accepted as a fallback)."
+            "Object id of a service principal to audit (appId accepted as a "
+            "fallback). May be repeated and combined with --ids-file."
+        ),
+    )
+    parser.add_argument(
+        "--ids-file",
+        metavar="PATH",
+        help=(
+            "Path to a file of object ids, either a newline list or a JSON "
+            "array. Merged and deduped with any --object-id values."
+        ),
+    )
+    parser.add_argument(
+        "--tag",
+        metavar="TAG",
+        help=(
+            "Select service principals carrying this tag. Mutually exclusive "
+            "with --object-id/--ids-file."
         ),
     )
     parser.add_argument(
@@ -46,10 +65,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=DEFAULT_OUTPUT,
         help=f"Path for the JSON Audit Report (default: {DEFAULT_OUTPUT}).",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    if args.tag is not None and (args.object_ids or args.ids_file):
+        parser.error("--tag is mutually exclusive with --object-id/--ids-file")
+    if args.tag is None and not args.object_ids and not args.ids_file:
+        parser.error("one of --object-id, --ids-file, or --tag is required")
+    return args
 
 
-async def _run(object_id: str, output: str) -> int:
+async def _run(args: argparse.Namespace) -> int:
+    output: str = args.output
+
     # Global precondition: fail fast with a non-zero exit before any collection.
     try:
         tenant_id = await verify_preconditions()
@@ -57,7 +84,16 @@ async def _run(object_id: str, output: str) -> int:
         print(f"sp-audit: precondition failed: {exc}", file=sys.stderr)
         return 2
 
-    selection: Selection = {"objectIds": [object_id]}
+    file_ids: list[str] = []
+    if args.ids_file:
+        try:
+            with open(args.ids_file, encoding="utf-8") as fh:
+                file_ids = parse_ids_file(fh.read())
+        except (OSError, ValueError) as exc:
+            print(f"sp-audit: failed to read --ids-file: {exc}", file=sys.stderr)
+            return 2
+
+    selection: Selection
     records: list[ServicePrincipalRecord] = []
     run_errors: list[str] = []
 
@@ -65,10 +101,23 @@ async def _run(object_id: str, output: str) -> int:
     credential = AzureCliCredential()
     try:
         client = GraphServiceClient(credentials=credential, scopes=[GRAPH_SCOPE])
-        try:
-            records.append(await collect_service_principal(client, object_id))
-        except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
-            run_errors.append(f"Failed to collect '{object_id}': {exc}")
+        if args.tag is not None:
+            selection = {"objectIds": [], "tag": args.tag}
+            try:
+                records = await collect_by_tag(client, args.tag)
+            except Exception as exc:  # noqa: BLE001 - degrade to Run Error, never abort
+                run_errors.append(f"Failed to select by tag '{args.tag}': {exc}")
+            selection["objectIds"] = [r["objectId"] for r in records]
+        else:
+            object_ids = merge_object_ids(args.object_ids, file_ids)
+            selection = {"objectIds": object_ids}
+            for object_id in object_ids:
+                try:
+                    records.append(
+                        await collect_service_principal(client, object_id)
+                    )
+                except Exception as exc:  # noqa: BLE001 - degrade to a Run Error
+                    run_errors.append(f"Failed to collect '{object_id}': {exc}")
     finally:
         await credential.close()
 
@@ -94,7 +143,7 @@ async def _run(object_id: str, output: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    exit_code = asyncio.run(_run(args.object_id, args.output))
+    exit_code = asyncio.run(_run(args))
     if argv is None:
         sys.exit(exit_code)
     return exit_code

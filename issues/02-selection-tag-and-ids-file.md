@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent]
+labels: [implemented]
 ---
 
 # Selection by tag and by ids-file
@@ -21,15 +21,15 @@ Establishes the pure `selection_parse` module.
 
 ## Acceptance criteria
 
-- [ ] `--tag` selects SPs via the tags filter with single-quote escaping and pages
+- [x] `--tag` selects SPs via the tags filter with single-quote escaping and pages
       through all results.
-- [ ] `--tag` is mutually exclusive with `--object-id`/`--ids-file`; `--object-id`
+- [x] `--tag` is mutually exclusive with `--object-id`/`--ids-file`; `--object-id`
       and `--ids-file` combine into one deduped set.
-- [ ] `--ids-file` parses both a newline list and a JSON array; blank lines are
+- [x] `--ids-file` parses both a newline list and a JSON array; blank lines are
       ignored.
-- [ ] Both selection paths request the same unified `$select`, including
+- [x] Both selection paths request the same unified `$select`, including
       `passwordCredentials`/`keyCredentials`/`tags`.
-- [ ] Unit tests cover `selection_parse`: newline vs JSON-array parsing, blank-line
+- [x] Unit tests cover `selection_parse`: newline vs JSON-array parsing, blank-line
       handling, and merge/dedup with inline `--object-id` values.
 
 ## Blocked by
