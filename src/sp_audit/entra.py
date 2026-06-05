@@ -9,22 +9,39 @@ unit-tested without a live Graph client.
 
 from __future__ import annotations
 
+from typing import Any, Literal
+
 from kiota_abstractions.api_error import APIError
 from kiota_abstractions.base_request_configuration import RequestConfiguration
 from msgraph import GraphServiceClient
 from msgraph.generated.applications.applications_request_builder import (
     ApplicationsRequestBuilder,
 )
+from msgraph.generated.groups.item.group_item_request_builder import (
+    GroupItemRequestBuilder,
+)
 from msgraph.generated.models.application import Application
+from msgraph.generated.models.group import Group
 from msgraph.generated.models.service_principal import ServicePrincipal
+from msgraph.generated.service_principals.item.member_of.member_of_request_builder import (  # noqa: E501
+    MemberOfRequestBuilder,
+)
 from msgraph.generated.service_principals.item.service_principal_item_request_builder import (  # noqa: E501
     ServicePrincipalItemRequestBuilder,
+)
+from msgraph.generated.service_principals.item.transitive_member_of.transitive_member_of_request_builder import (  # noqa: E501
+    TransitiveMemberOfRequestBuilder,
 )
 from msgraph.generated.service_principals.service_principals_request_builder import (
     ServicePrincipalsRequestBuilder,
 )
 
-from .models import ApplicationRecord, ServicePrincipalRecord
+from .models import (
+    ApplicationRecord,
+    GroupMembershipRecord,
+    ServicePrincipalRecord,
+)
+from .single_flight import SingleFlight
 
 # Unified $select so SP-side fields are never path-dependent across the
 # selection routes (by object id, appId-eq fallback, and tag query). Every SP
@@ -39,6 +56,7 @@ SP_SELECT = [
     "keyCredentials",
 ]
 APP_SELECT = ["id", "displayName", "appId"]
+GROUP_SELECT = ["id", "displayName", "isAssignableToRole"]
 
 
 def application_record_from_graph(app: Application) -> ApplicationRecord:
@@ -73,6 +91,24 @@ def sp_record_from_graph(
         # Azure RBAC plane is folded in by the CLI after the ARG batch query;
         # every record starts with an empty (directory-plane-only) list.
         "azureRoleAssignments": [],
+        "groupMemberships": [],
+        "errors": [],
+    }
+
+
+def group_membership_from_graph(
+    group: Group, membership_type: Literal["direct", "transitive"]
+) -> GroupMembershipRecord:
+    """Map a Graph Group onto a membership record, labeling how it is held.
+
+    Pure: no network. `membership_type` is supplied by the caller — `member_of`
+    yields `direct`, `transitiveMemberOf` yields `transitive`.
+    """
+    return {
+        "groupId": group.id,
+        "displayName": group.display_name,
+        "membershipType": membership_type,
+        "isAssignableToRole": group.is_assignable_to_role,
     }
 
 
@@ -140,12 +176,107 @@ async def _record_with_application(
     return sp_record_from_graph(sp, application)
 
 
+async def _page_groups(builder: Any, config: RequestConfiguration) -> list[Group]:
+    """Follow `@odata.nextLink` over a membership builder, keeping only groups.
+
+    `memberOf`/`transitiveMemberOf` return mixed directory objects (groups,
+    directory roles, administrative units); only `Group` entries are memberships
+    in the sense this audit cares about.
+    """
+    groups: list[Group] = []
+    page = await builder.get(request_configuration=config)
+    while page is not None:
+        for obj in page.value or []:
+            if isinstance(obj, Group):
+                groups.append(obj)
+        next_link = page.odata_next_link
+        if not next_link:
+            break
+        page = await builder.with_url(next_link).get()
+    return groups
+
+
+async def collect_group_memberships(
+    client: GraphServiceClient, object_id: str
+) -> list[GroupMembershipRecord]:
+    """Collect a Service Principal's group memberships, labeled by how held.
+
+    Pages `memberOf` (labeled `direct`) and `transitiveMemberOf` (labeled
+    `transitive`), requesting `isAssignableToRole` so downstream via-group
+    attribution can decide which groups actually confer a directory role.
+    """
+    sp_item = client.service_principals.by_service_principal_id(object_id)
+    direct_config = RequestConfiguration(
+        query_parameters=MemberOfRequestBuilder.MemberOfRequestBuilderGetQueryParameters(
+            select=GROUP_SELECT,
+        )
+    )
+    transitive_config = RequestConfiguration(
+        query_parameters=TransitiveMemberOfRequestBuilder.TransitiveMemberOfRequestBuilderGetQueryParameters(
+            select=GROUP_SELECT,
+        )
+    )
+    memberships = [
+        group_membership_from_graph(group, "direct")
+        for group in await _page_groups(sp_item.member_of, direct_config)
+    ]
+    memberships.extend(
+        group_membership_from_graph(group, "transitive")
+        for group in await _page_groups(sp_item.transitive_member_of, transitive_config)
+    )
+    return memberships
+
+
+async def resolve_group_name(
+    client: GraphServiceClient,
+    single_flight: SingleFlight[str, str | None],
+    group_id: str,
+) -> str | None:
+    """Resolve a group's display name, fetching at most once per group id.
+
+    Backed by `single_flight`: concurrent or repeat lookups for the same group
+    share one `GET /groups/{id}` instead of refetching. This is the pattern
+    slices 5 and 8 reuse for their own per-group lookups.
+    """
+
+    async def fetch() -> str | None:
+        config = RequestConfiguration(
+            query_parameters=GroupItemRequestBuilder.GroupItemRequestBuilderGetQueryParameters(
+                select=["id", "displayName"],
+            )
+        )
+        group = await client.groups.by_group_id(group_id).get(
+            request_configuration=config
+        )
+        return group.display_name if group is not None else None
+
+    return await single_flight.do(group_id, fetch)
+
+
+async def _collect_for_service_principal(
+    client: GraphServiceClient, sp: ServicePrincipal
+) -> ServicePrincipalRecord:
+    """Build a record for an already-resolved SP, including group memberships.
+
+    A failure gathering group memberships degrades to an SP Gap in the record's
+    `errors[]` rather than aborting the whole SP (ADR-0002 two-tier failures).
+    """
+    record = await _record_with_application(client, sp)
+    try:
+        record["groupMemberships"] = await collect_group_memberships(
+            client, record["objectId"]
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
+        record["errors"].append(f"Failed to collect group memberships: {exc}")
+    return record
+
+
 async def collect_service_principal(
     client: GraphServiceClient, object_id: str
 ) -> ServicePrincipalRecord:
-    """Collect one Service Principal's identity and attached Application."""
+    """Collect one Service Principal's identity, Application, and memberships."""
     sp = await _resolve_service_principal(client, object_id)
-    return await _record_with_application(client, sp)
+    return await _collect_for_service_principal(client, sp)
 
 
 async def select_by_tag(client: GraphServiceClient, tag: str) -> list[ServicePrincipal]:
@@ -179,6 +310,6 @@ async def collect_by_tag(
 ) -> list[ServicePrincipalRecord]:
     """Collect every Service Principal carrying `tag` into records."""
     return [
-        await _record_with_application(client, sp)
+        await _collect_for_service_principal(client, sp)
         for sp in await select_by_tag(client, tag)
     ]

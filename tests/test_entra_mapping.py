@@ -3,12 +3,32 @@
 from __future__ import annotations
 
 from msgraph.generated.models.application import Application
+from msgraph.generated.models.group import Group
 from msgraph.generated.models.service_principal import ServicePrincipal
 
 from sp_audit.entra import (
     application_record_from_graph,
+    group_membership_from_graph,
     sp_record_from_graph,
 )
+
+
+def test_group_membership_mapping_labels_membership_type() -> None:
+    group = Group(
+        id="g-1",
+        display_name="role-assignable-group",
+        is_assignable_to_role=True,
+    )
+
+    assert group_membership_from_graph(group, "direct") == {
+        "groupId": "g-1",
+        "displayName": "role-assignable-group",
+        "membershipType": "direct",
+        "isAssignableToRole": True,
+    }
+    assert group_membership_from_graph(group, "transitive")["membershipType"] == (
+        "transitive"
+    )
 
 
 def test_sp_record_carries_identity_tags_and_null_application() -> None:
@@ -28,6 +48,8 @@ def test_sp_record_carries_identity_tags_and_null_application() -> None:
         "tags": ["terraform-iac", "prod"],
         "application": None,
         "azureRoleAssignments": [],
+        "groupMemberships": [],
+        "errors": [],
     }
 
 

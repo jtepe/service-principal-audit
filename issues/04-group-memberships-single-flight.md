@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent]
+labels: [implemented]
 ---
 
 # Group memberships + single-flight cache foundation
@@ -25,13 +25,13 @@ aborting.
 
 ## Acceptance criteria
 
-- [ ] Each SP record carries `groupMemberships` with direct and transitive entries,
+- [x] Each SP record carries `groupMemberships` with direct and transitive entries,
       labeled, including `isAssignableToRole`.
-- [ ] Both membership queries page fully.
-- [ ] `single_flight` exists and backs the `groupId → displayName` lookup; a repeat
+- [x] Both membership queries page fully.
+- [x] `single_flight` exists and backs the `groupId → displayName` lookup; a repeat
       lookup for the same group does not refetch.
-- [ ] A 403 or error on a membership call records an SP Gap and the run continues.
-- [ ] Unit tests cover `single_flight`: concurrent missers on one key trigger
+- [x] A 403 or error on a membership call records an SP Gap and the run continues.
+- [x] Unit tests cover `single_flight`: concurrent missers on one key trigger
       exactly one underlying fetch and all receive the same result; distinct keys
       fetch independently; a failed fetch does not poison a later retry.
 
