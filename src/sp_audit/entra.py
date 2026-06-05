@@ -237,6 +237,10 @@ async def resolve_group_name(
     Backed by `single_flight`: concurrent or repeat lookups for the same group
     share one `GET /groups/{id}` instead of refetching. This is the pattern
     slices 5 and 8 reuse for their own per-group lookups.
+
+    The cache key is namespaced by the Graph resource path (`/groups/{id}`) so a
+    shared `single_flight` can hold other resource kinds (e.g. role definitions)
+    without bare-id collisions across namespaces.
     """
 
     async def fetch() -> str | None:
@@ -250,7 +254,7 @@ async def resolve_group_name(
         )
         return group.display_name if group is not None else None
 
-    return await single_flight.do(group_id, fetch)
+    return await single_flight.do(f"/groups/{group_id}", fetch)
 
 
 async def _collect_for_service_principal(
