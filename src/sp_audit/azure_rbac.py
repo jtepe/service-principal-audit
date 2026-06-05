@@ -25,10 +25,9 @@ _PAGE = 1000
 
 # Role assignments held by the selected principals, with the raw fields the
 # transform expects. `{principals}` is substituted with the OData-escaped,
-# comma-separated id list. `order by id` gives a stable total order so numeric
-# `--skip` paging over result sets larger than the 1000-record page is
-# deterministic — without it ARG returns rows in a random, non-repeatable order
-# and paging drops/duplicates them.
+# comma-separated id list. `order by id` gives a stable total order so the
+# skip-token-paged result is repeatable (and the role-name "first wins" dedup is
+# deterministic) across runs.
 _ASSIGNMENTS_QUERY = """
 authorizationresources
 | where type =~ 'microsoft.authorization/roleassignments'
@@ -62,34 +61,31 @@ resourcecontainers
 
 
 def _run_arg_query(query: str) -> list[dict]:
-    """Run one ARG query via `az graph query`, paging until exhausted."""
+    """Run one ARG query via `az graph query`, paging until exhausted.
+
+    Pages with ARG's `$skipToken` continuation (`--skip-token`) rather than a
+    numeric `--skip`: the token carries server-side continuation state, so paging
+    stays correct across result sets far larger than the 1000-record page without
+    relying on offset arithmetic. The response's `skip_token` is empty/absent on
+    the final page.
+    """
     rows: list[dict] = []
-    skip = 0
+    skip_token: str | None = None
     while True:
-        completed = subprocess.run(
-            [
-                "az",
-                "graph",
-                "query",
-                "-q",
-                query,
-                "--first",
-                str(_PAGE),
-                "--skip",
-                str(skip),
-                "-o",
-                "json",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        command = ["az", "graph", "query", "-q", query, "--first", str(_PAGE)]
+        if skip_token:
+            command += ["--skip-token", skip_token]
+        command += ["-o", "json"]
+        completed = subprocess.run(command, capture_output=True, text=True, check=True)
         payload = json.loads(completed.stdout)
-        batch = payload.get("data", []) if isinstance(payload, dict) else payload
-        rows.extend(batch)
-        if len(batch) < _PAGE:
+        if isinstance(payload, dict):
+            rows.extend(payload.get("data", []))
+            skip_token = payload.get("skip_token")
+        else:  # defensive: a bare array carries no continuation token
+            rows.extend(payload)
+            skip_token = None
+        if not skip_token:
             break
-        skip += _PAGE
     return rows
 
 
