@@ -95,7 +95,6 @@ The companion script `render_html.py` converts the JSON report produced by `audi
 ### Prerequisites
 
 - Python 3.10 or newer. No third-party packages are required; the script only uses the standard library.
-- A JSON report previously produced by `audit_rbac.py` (see above).
 
 ### Usage
 
