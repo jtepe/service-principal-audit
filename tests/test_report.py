@@ -16,6 +16,7 @@ def _record(display_name: str | None, object_id: str = "oid") -> ServicePrincipa
         "displayName": display_name,
         "tags": [],
         "application": None,
+        "azureRoleAssignments": [],
     }
 
 

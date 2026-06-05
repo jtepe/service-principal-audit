@@ -17,6 +17,7 @@ from azure.identity.aio import AzureCliCredential
 from msgraph import GraphServiceClient
 
 from .auth import GRAPH_SCOPE, PreconditionError, verify_preconditions
+from .azure_rbac import collect_azure_rbac
 from .entra import collect_by_tag, collect_service_principal
 from .models import Selection, ServicePrincipalRecord
 from .report import build_report
@@ -113,13 +114,25 @@ async def _run(args: argparse.Namespace) -> int:
             selection = {"objectIds": object_ids}
             for object_id in object_ids:
                 try:
-                    records.append(
-                        await collect_service_principal(client, object_id)
-                    )
+                    records.append(await collect_service_principal(client, object_id))
                 except Exception as exc:  # noqa: BLE001 - degrade to a Run Error
                     run_errors.append(f"Failed to collect '{object_id}': {exc}")
     finally:
         await credential.close()
+
+    # Azure RBAC plane: a single full management-group-scoped ARG batch. A
+    # failure here is a Run Error (ADR-0002) — the Entra-plane data still writes.
+    try:
+        assignments_by_principal = await collect_azure_rbac(
+            [r["objectId"] for r in records]
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
+        run_errors.append(f"Azure RBAC query failed: {exc}")
+    else:
+        for record in records:
+            record["azureRoleAssignments"] = assignments_by_principal.get(
+                record["objectId"], []
+            )
 
     report = build_report(
         records,
