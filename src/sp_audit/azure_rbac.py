@@ -25,12 +25,16 @@ _PAGE = 1000
 
 # Role assignments held by the selected principals, with the raw fields the
 # transform expects. `{principals}` is substituted with the OData-escaped,
-# comma-separated id list.
+# comma-separated id list. `order by id` gives a stable total order so numeric
+# `--skip` paging over result sets larger than the 1000-record page is
+# deterministic — without it ARG returns rows in a random, non-repeatable order
+# and paging drops/duplicates them.
 _ASSIGNMENTS_QUERY = """
 authorizationresources
 | where type =~ 'microsoft.authorization/roleassignments'
 | extend principalId = tostring(properties.principalId)
 | where principalId in~ ({principals})
+| order by id asc
 | project
     principalId,
     roleDefinitionId = tostring(properties.roleDefinitionId),
@@ -38,11 +42,13 @@ authorizationresources
     subscriptionId
 """
 
-# Every role definition in reach. Built-in roles repeat once per subscription;
-# the transform de-duplicates by trailing GUID so they do not fan out rows.
+# Every role definition in reach. This is unfiltered, so it routinely exceeds
+# the 1000-record page — built-in roles repeat once per subscription. The
+# transform de-duplicates by trailing GUID so they do not fan out rows.
 _ROLE_DEFINITIONS_QUERY = """
 authorizationresources
 | where type =~ 'microsoft.authorization/roledefinitions'
+| order by id asc
 | project id, roleName = tostring(properties.roleName)
 """
 
@@ -50,6 +56,7 @@ authorizationresources
 _SUBSCRIPTIONS_QUERY = """
 resourcecontainers
 | where type =~ 'microsoft.resources/subscriptions'
+| order by subscriptionId asc
 | project subscriptionId, subscriptionName = name
 """
 
