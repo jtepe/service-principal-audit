@@ -7,7 +7,7 @@ rather than leaving it aspirational.
 
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 
 class ApplicationRecord(TypedDict):
@@ -39,6 +39,21 @@ class AzureRoleAssignment(TypedDict):
     managementGroupId: str | None
 
 
+class GroupMembershipRecord(TypedDict):
+    """One group the Service Principal belongs to, directly or transitively.
+
+    `membershipType` distinguishes a directly-assigned group (`memberOf`) from
+    one reached only through nesting (`transitiveMemberOf`). `isAssignableToRole`
+    is the Graph flag that decides whether a directory role targeting the group
+    is actually attributed to the SP (see CONTEXT.md, Via-group attribution).
+    """
+
+    groupId: str | None
+    displayName: str | None
+    membershipType: Literal["direct", "transitive"]
+    isAssignableToRole: bool | None
+
+
 class ServicePrincipalRecord(TypedDict):
     """A single audited Service Principal: identity, tags, attached Application."""
 
@@ -48,6 +63,8 @@ class ServicePrincipalRecord(TypedDict):
     tags: list[str]
     application: ApplicationRecord | None
     azureRoleAssignments: list[AzureRoleAssignment]
+    groupMemberships: list[GroupMembershipRecord]
+    errors: list[str]
 
 
 class Selection(TypedDict):
