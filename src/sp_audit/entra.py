@@ -70,6 +70,9 @@ def sp_record_from_graph(
             if application is not None
             else None
         ),
+        # Azure RBAC plane is folded in by the CLI after the ARG batch query;
+        # every record starts with an empty (directory-plane-only) list.
+        "azureRoleAssignments": [],
     }
 
 
@@ -145,9 +148,7 @@ async def collect_service_principal(
     return await _record_with_application(client, sp)
 
 
-async def select_by_tag(
-    client: GraphServiceClient, tag: str
-) -> list[ServicePrincipal]:
+async def select_by_tag(client: GraphServiceClient, tag: str) -> list[ServicePrincipal]:
     """Select Service Principals by tag, paging through all results.
 
     Queries `tags/any(c:c eq '{tag}')` with OData single-quote escaping and

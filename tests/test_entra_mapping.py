@@ -27,6 +27,7 @@ def test_sp_record_carries_identity_tags_and_null_application() -> None:
         "displayName": "app-frontend-sp",
         "tags": ["terraform-iac", "prod"],
         "application": None,
+        "azureRoleAssignments": [],
     }
 
 

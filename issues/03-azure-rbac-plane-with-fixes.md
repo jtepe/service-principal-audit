@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent]
+labels: [implemented]
 ---
 
 # Azure RBAC plane with scope-classification and role-name fixes
@@ -37,18 +37,18 @@ there:
 
 ## Acceptance criteria
 
-- [ ] A single `sp-audit` run populates `azureRoleAssignments` per SP from a full
+- [x] A single `sp-audit` run populates `azureRoleAssignments` per SP from a full
       management-group-scoped ARG query.
-- [ ] MG-scoped assignments classify as `"Management Group"` and carry a parsed
+- [x] MG-scoped assignments classify as `"Management Group"` and carry a parsed
       `managementGroupId`; subscription/RG/resource scopes classify correctly.
-- [ ] Azure role names resolve to friendly names (e.g. "Contributor"), not GUIDs;
+- [x] Azure role names resolve to friendly names (e.g. "Contributor"), not GUIDs;
       an unresolved (deleted) role falls back to the GUID.
-- [ ] Duplicate role definitions across subscriptions do not multiply assignment
+- [x] Duplicate role definitions across subscriptions do not multiply assignment
       rows.
-- [ ] An ARG query failure is recorded in `meta.runErrors` and the run still writes
+- [x] An ARG query failure is recorded in `meta.runErrors` and the run still writes
       the Entra-plane data and exits 0.
-- [ ] `azureRoleAssignments` and `directoryRoles` are distinct fields.
-- [ ] Unit tests cover `arg_transform`: all four scopeType classifications + parsed
+- [x] `azureRoleAssignments` and `directoryRoles` are distinct fields.
+- [x] Unit tests cover `arg_transform`: all four scopeType classifications + parsed
       `managementGroupId`, GUID-normalized role-name resolution, dedup-no-fanout,
       and the deleted-role GUID fallback.
 
