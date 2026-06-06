@@ -217,16 +217,6 @@ async def _resolve_application(
     return matches[0] if matches else None
 
 
-async def _record_with_application(
-    client: GraphServiceClient, sp: ServicePrincipal
-) -> ServicePrincipalRecord:
-    """Attach the related Application (if any) and map to a record."""
-    application: Application | None = None
-    if sp.app_id:
-        application = await _resolve_application(client, sp.app_id)
-    return sp_record_from_graph(sp, application)
-
-
 async def _page_groups(builder: Any, config: RequestConfiguration) -> list[Group]:
     """Follow `@odata.nextLink` over a membership builder, keeping only groups.
 
@@ -425,11 +415,21 @@ async def _collect_for_service_principal(
 ) -> ServicePrincipalRecord:
     """Build a record for an already-resolved SP: Application, memberships, roles.
 
-    Each section degrades to an SP Gap in the record's `errors[]` rather than
-    aborting the whole SP (ADR-0002 two-tier failures). Directory-role
+    Every section degrades to an SP Gap in the record's `errors[]` rather than
+    aborting the whole SP (ADR-0002 two-tier failures), so this never raises: the
+    base record is mapped first from the already-resolved SP, then the Application
+    and each collected section are attached independently. Directory-role
     attribution depends on the collected memberships, so it runs after them.
     """
-    record = await _record_with_application(client, sp)
+    record = sp_record_from_graph(sp, None)
+    if sp.app_id:
+        try:
+            application = await _resolve_application(client, sp.app_id)
+        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
+            record["errors"].append(f"Failed to resolve application: {exc}")
+        else:
+            if application is not None:
+                record["application"] = application_record_from_graph(application)
     try:
         record["groupMemberships"] = await collect_group_memberships(
             client, record["objectId"]
@@ -445,28 +445,50 @@ async def _collect_for_service_principal(
     return record
 
 
+async def _collect_all(
+    client: GraphServiceClient, service_principals: list[ServicePrincipal]
+) -> tuple[list[ServicePrincipalRecord], list[str]]:
+    """Collect a list of already-resolved SPs into records, isolating failures.
+
+    Shared by both selection paths so a per-SP failure never aborts the batch.
+    One `schedule_cache` is shared across the whole selection so a group reached
+    by many SPs has its directory-role schedules fetched once for the run. Per-SP
+    sections already degrade to SP Gaps; an unexpected collection failure here
+    degrades to a Run Error rather than dropping every other SP.
+    """
+    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
+    records: list[ServicePrincipalRecord] = []
+    run_errors: list[str] = []
+    for sp in service_principals:
+        try:
+            records.append(
+                await _collect_for_service_principal(client, sp, schedule_cache)
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
+            run_errors.append(f"Failed to collect '{sp.id}': {exc}")
+    return records, run_errors
+
+
 async def collect_by_object_ids(
     client: GraphServiceClient, object_ids: list[str]
 ) -> tuple[list[ServicePrincipalRecord], list[str]]:
     """Collect records for an explicit set of object ids.
 
-    Mirrors `collect_by_tag`: one `schedule_cache` is shared across the whole
-    selection so a group reached by many SPs has its directory-role schedules
-    fetched once for the run. A per-id resolution/collection failure degrades to
-    a Run Error (returned alongside the records) rather than aborting the run.
+    Each id is resolved independently, so an unresolvable id degrades to a Run
+    Error rather than aborting the run; the rest are then collected via the
+    shared `_collect_all` path. Returns the records plus all Run Errors.
     """
-    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
-    records: list[ServicePrincipalRecord] = []
+    service_principals: list[ServicePrincipal] = []
     run_errors: list[str] = []
     for object_id in object_ids:
         try:
-            sp = await _resolve_service_principal(client, object_id)
-            records.append(
-                await _collect_for_service_principal(client, sp, schedule_cache)
+            service_principals.append(
+                await _resolve_service_principal(client, object_id)
             )
         except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
-            run_errors.append(f"Failed to collect '{object_id}': {exc}")
-    return records, run_errors
+            run_errors.append(f"Failed to resolve '{object_id}': {exc}")
+    records, collect_errors = await _collect_all(client, service_principals)
+    return records, run_errors + collect_errors
 
 
 async def _select_by_tag(
@@ -499,14 +521,16 @@ async def _select_by_tag(
 
 async def collect_by_tag(
     client: GraphServiceClient, tag: str
-) -> list[ServicePrincipalRecord]:
+) -> tuple[list[ServicePrincipalRecord], list[str]]:
     """Collect every Service Principal carrying `tag` into records.
 
-    One `schedule_cache` is shared across the whole selection so a group reached
-    by many SPs has its directory-role schedules fetched once for the run.
+    Tag selection is a single Graph query: if it fails the whole selection is a
+    Run Error. The selected SPs are then collected via the shared `_collect_all`
+    path, so one SP's failure no longer drops the rest. Returns the records plus
+    all Run Errors.
     """
-    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
-    return [
-        await _collect_for_service_principal(client, sp, schedule_cache)
-        for sp in await _select_by_tag(client, tag)
-    ]
+    try:
+        service_principals = await _select_by_tag(client, tag)
+    except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
+        return [], [f"Failed to select by tag '{tag}': {exc}"]
+    return await _collect_all(client, service_principals)
