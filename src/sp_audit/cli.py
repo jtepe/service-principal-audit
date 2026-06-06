@@ -18,11 +18,10 @@ from msgraph import GraphServiceClient
 
 from .auth import GRAPH_SCOPE, PreconditionError, verify_preconditions
 from .azure_rbac import collect_azure_rbac
-from .entra import collect_by_tag, collect_service_principal
-from .models import DirectoryRoleRecord, Selection, ServicePrincipalRecord
+from .entra import collect_by_object_ids, collect_by_tag
+from .models import Selection, ServicePrincipalRecord
 from .report import build_report
 from .selection_parse import merge_object_ids, parse_ids_file
-from .single_flight import SingleFlight
 
 DEFAULT_OUTPUT = "audit-report.json"
 
@@ -113,20 +112,8 @@ async def _run(args: argparse.Namespace) -> int:
         else:
             object_ids = merge_object_ids(args.object_ids, file_ids)
             selection = {"objectIds": object_ids}
-            # One shared per-group schedule cache across the whole id selection
-            # so a group reached by many SPs is fetched once for the run.
-            schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = (
-                SingleFlight()
-            )
-            for object_id in object_ids:
-                try:
-                    records.append(
-                        await collect_service_principal(
-                            client, object_id, schedule_cache
-                        )
-                    )
-                except Exception as exc:  # noqa: BLE001 - degrade to a Run Error
-                    run_errors.append(f"Failed to collect '{object_id}': {exc}")
+            records, id_errors = await collect_by_object_ids(client, object_ids)
+            run_errors.extend(id_errors)
     finally:
         await credential.close()
 
