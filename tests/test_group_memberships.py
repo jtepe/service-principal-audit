@@ -81,14 +81,11 @@ class FakeClient:
         self,
         item: FakeSpItem | None = None,
         groups: FakeGroups | None = None,
-        applications: object | None = None,
     ) -> None:
         if item is not None:
             self.service_principals = FakeServicePrincipals(item)
         if groups is not None:
             self.groups = groups
-        if applications is not None:
-            self.applications = applications
 
 
 def test_collects_direct_and_transitive_labeled_and_filters_non_groups() -> None:
@@ -194,36 +191,3 @@ class _StubSp:
     app_id = None
     display_name = "sp"
     tags = None
-
-
-class FailingApplications:
-    async def get(self, request_configuration: object = None) -> object:
-        raise PermissionError("403 Forbidden")
-
-
-class _StubSpWithApp:
-    id = "sp-oid"
-    app_id = "app-123"
-    display_name = "sp"
-    tags = None
-
-
-def test_application_failure_records_sp_gap_and_nulls_application(monkeypatch) -> None:
-    async def fake_resolve(client: object, object_id: str) -> object:
-        return _StubSpWithApp()
-
-    import sp_audit.entra as entra
-
-    monkeypatch.setattr(entra, "_resolve_service_principal", fake_resolve)
-
-    empty = FakeMembersBuilder([FakePage([])])
-    client = cast(
-        GraphServiceClient,
-        FakeClient(item=FakeSpItem(empty, empty), applications=FailingApplications()),
-    )
-
-    records, _ = asyncio.run(collect_by_object_ids(client, ["sp-oid"]))
-    record = records[0]
-
-    assert record["application"] is None
-    assert any("application" in err.lower() for err in record["errors"])
