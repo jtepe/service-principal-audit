@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent]
+labels: [implemented]
 ---
 
 # Directory Roles — four paths with via-group attribution
@@ -31,17 +31,17 @@ per-section failure degrades to an SP Gap.
 
 ## Acceptance criteria
 
-- [ ] Each SP record carries `directoryRoles` populated from all four paths, with
+- [x] Each SP record carries `directoryRoles` populated from all four paths, with
       resolved role display names.
-- [ ] Direct roles are labeled `source = "direct"`; via-group roles carry the
+- [x] Direct roles are labeled `source = "direct"`; via-group roles carry the
       group's display name as `source` and its id as `sourceGroupId`.
-- [ ] Only role-assignable groups are queried for via-group paths; attribution is
+- [x] Only role-assignable groups are queried for via-group paths; attribution is
       path-insensitive across transitive membership.
-- [ ] A group's role schedules are fetched once and reused across all SPs that
+- [x] A group's role schedules are fetched once and reused across all SPs that
       reach it (via the single-flight cache).
-- [ ] No `effective`/`effectiveReason` field is emitted; roles and memberships
+- [x] No `effective`/`effectiveReason` field is emitted; roles and memberships
       remain separate cross-referenceable arrays.
-- [ ] A 403 on a schedule call records an SP Gap and the run continues.
+- [x] A 403 on a schedule call records an SP Gap and the run continues.
 
 ## Blocked by
 

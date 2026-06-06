@@ -54,6 +54,26 @@ class GroupMembershipRecord(TypedDict):
     isAssignableToRole: bool | None
 
 
+class DirectoryRoleRecord(TypedDict):
+    """A Directory Role (Entra plane) held by the Service Principal.
+
+    Carried in `ServicePrincipalRecord.directoryRoles`, populated from all four
+    assignment paths (`assignmentType` active/eligible × direct/via-group).
+    `source` is `"direct"` when the role targets the SP itself, or the group's
+    display name when attributed through a role-assignable group; `sourceGroupId`
+    carries that group's id (`None` for direct). Raw facts only — no computed
+    `effective` field (see CONTEXT.md, Via-group attribution).
+    """
+
+    roleName: str | None
+    assignmentType: Literal["active", "eligible"]
+    source: str
+    sourceGroupId: str | None
+    directoryScopeId: str | None
+    startDateTime: str | None
+    endDateTime: str | None
+
+
 class ServicePrincipalRecord(TypedDict):
     """A single audited Service Principal: identity, tags, attached Application."""
 
@@ -64,6 +84,7 @@ class ServicePrincipalRecord(TypedDict):
     application: ApplicationRecord | None
     azureRoleAssignments: list[AzureRoleAssignment]
     groupMemberships: list[GroupMembershipRecord]
+    directoryRoles: list[DirectoryRoleRecord]
     errors: list[str]
 
 
