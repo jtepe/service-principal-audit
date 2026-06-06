@@ -195,8 +195,7 @@ def test_membership_failure_records_sp_gap_and_continues(monkeypatch) -> None:
     record = asyncio.run(collect_service_principal(client, "sp-oid"))
 
     assert record["groupMemberships"] == []
-    assert len(record["errors"]) == 1
-    assert "group membership" in record["errors"][0].lower()
+    assert any("group membership" in err.lower() for err in record["errors"])
 
 
 class _StubSp:

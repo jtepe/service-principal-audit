@@ -23,6 +23,18 @@ from msgraph.generated.groups.item.group_item_request_builder import (
 from msgraph.generated.models.application import Application
 from msgraph.generated.models.group import Group
 from msgraph.generated.models.service_principal import ServicePrincipal
+from msgraph.generated.models.unified_role_assignment_schedule import (
+    UnifiedRoleAssignmentSchedule,
+)
+from msgraph.generated.models.unified_role_eligibility_schedule import (
+    UnifiedRoleEligibilitySchedule,
+)
+from msgraph.generated.role_management.directory.role_assignment_schedules.role_assignment_schedules_request_builder import (  # noqa: E501
+    RoleAssignmentSchedulesRequestBuilder,
+)
+from msgraph.generated.role_management.directory.role_eligibility_schedules.role_eligibility_schedules_request_builder import (  # noqa: E501
+    RoleEligibilitySchedulesRequestBuilder,
+)
 from msgraph.generated.service_principals.item.member_of.member_of_request_builder import (  # noqa: E501
     MemberOfRequestBuilder,
 )
@@ -38,6 +50,7 @@ from msgraph.generated.service_principals.service_principals_request_builder imp
 
 from .models import (
     ApplicationRecord,
+    DirectoryRoleRecord,
     GroupMembershipRecord,
     ServicePrincipalRecord,
 )
@@ -57,6 +70,12 @@ SP_SELECT = [
 ]
 APP_SELECT = ["id", "displayName", "appId"]
 GROUP_SELECT = ["id", "displayName", "isAssignableToRole"]
+
+# Both directory-role schedule kinds share the same readable shape
+# (`roleDefinition`, `directoryScopeId`, `scheduleInfo`); `scheduleInfo` lives on
+# the concrete subclasses rather than `UnifiedRoleScheduleBase`, so the collector
+# types against the union.
+type RoleSchedule = UnifiedRoleAssignmentSchedule | UnifiedRoleEligibilitySchedule
 
 
 def application_record_from_graph(app: Application) -> ApplicationRecord:
@@ -92,6 +111,7 @@ def sp_record_from_graph(
         # every record starts with an empty (directory-plane-only) list.
         "azureRoleAssignments": [],
         "groupMemberships": [],
+        "directoryRoles": [],
         "errors": [],
     }
 
@@ -109,6 +129,37 @@ def group_membership_from_graph(
         "displayName": group.display_name,
         "membershipType": membership_type,
         "isAssignableToRole": group.is_assignable_to_role,
+    }
+
+
+def directory_role_from_schedule(
+    schedule: RoleSchedule,
+    assignment_type: Literal["active", "eligible"],
+    source: str,
+    source_group_id: str | None,
+) -> DirectoryRoleRecord:
+    """Map a Graph role schedule onto a Directory Role record.
+
+    Pure: no network, no clock. `assignment_type` is supplied by the caller —
+    `roleAssignmentSchedules` yield `active`, `roleEligibilitySchedules` yield
+    `eligible`. `source`/`source_group_id` carry the Via-group attribution:
+    `"direct"`/`None` for a role targeting the SP itself, or the group's display
+    name/id for one reached through a role-assignable group. Raw facts only.
+    """
+    role_definition = schedule.role_definition
+    role_name = role_definition.display_name if role_definition is not None else None
+    schedule_info = schedule.schedule_info
+    start = schedule_info.start_date_time if schedule_info is not None else None
+    expiration = schedule_info.expiration if schedule_info is not None else None
+    end = expiration.end_date_time if expiration is not None else None
+    return {
+        "roleName": role_name,
+        "assignmentType": assignment_type,
+        "source": source,
+        "sourceGroupId": source_group_id,
+        "directoryScopeId": schedule.directory_scope_id,
+        "startDateTime": start.isoformat() if start is not None else None,
+        "endDateTime": end.isoformat() if end is not None else None,
     }
 
 
@@ -257,13 +308,126 @@ async def resolve_group_name(
     return await single_flight.do(f"/groups/{group_id}", fetch)
 
 
-async def _collect_for_service_principal(
-    client: GraphServiceClient, sp: ServicePrincipal
-) -> ServicePrincipalRecord:
-    """Build a record for an already-resolved SP, including group memberships.
+async def _page_schedules(
+    builder: Any, config: RequestConfiguration
+) -> list[RoleSchedule]:
+    """Follow `@odata.nextLink` over a role-schedule builder, collecting items.
 
-    A failure gathering group memberships degrades to an SP Gap in the record's
-    `errors[]` rather than aborting the whole SP (ADR-0002 two-tier failures).
+    Shared by the active (`roleAssignmentSchedules`) and eligible
+    (`roleEligibilitySchedules`) endpoints, whose collection responses share the
+    `RoleSchedule` shape (`roleDefinition`, `directoryScopeId`,
+    `scheduleInfo`).
+    """
+    schedules: list[RoleSchedule] = []
+    page = await builder.get(request_configuration=config)
+    while page is not None:
+        schedules.extend(page.value or [])
+        next_link = page.odata_next_link
+        if not next_link:
+            break
+        page = await builder.with_url(next_link).get()
+    return schedules
+
+
+async def _principal_schedules(
+    client: GraphServiceClient, principal_id: str
+) -> tuple[list[RoleSchedule], list[RoleSchedule]]:
+    """Fetch (active, eligible) directory-role schedules for one principal id.
+
+    The principal may be the SP itself (direct paths) or a role-assignable group
+    (via-group paths); both are filtered by `principalId` with
+    `$expand=roleDefinition` so role display names resolve in the same call.
+    """
+    escaped = principal_id.replace("'", "''")
+    active_config = RequestConfiguration(
+        query_parameters=RoleAssignmentSchedulesRequestBuilder.RoleAssignmentSchedulesRequestBuilderGetQueryParameters(
+            filter=f"principalId eq '{escaped}'",
+            expand=["roleDefinition"],
+        )
+    )
+    eligible_config = RequestConfiguration(
+        query_parameters=RoleEligibilitySchedulesRequestBuilder.RoleEligibilitySchedulesRequestBuilderGetQueryParameters(
+            filter=f"principalId eq '{escaped}'",
+            expand=["roleDefinition"],
+        )
+    )
+    directory = client.role_management.directory
+    active = await _page_schedules(directory.role_assignment_schedules, active_config)
+    eligible = await _page_schedules(
+        directory.role_eligibility_schedules, eligible_config
+    )
+    return active, eligible
+
+
+async def collect_directory_roles(
+    client: GraphServiceClient,
+    object_id: str,
+    memberships: list[GroupMembershipRecord],
+    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]],
+) -> list[DirectoryRoleRecord]:
+    """Collect Directory Roles across all four paths, with Via-group attribution.
+
+    Direct paths filter the SP's own id (`source = "direct"`). Via-group paths
+    query, for each role-assignable group the SP is a transitive member of, the
+    group's schedules and attribute every returned role to the SP with the
+    group's display name as `source` and its id as `sourceGroupId` — regardless
+    of intermediate non-role-assignable groups, since `memberships` already holds
+    the transitive closure.
+
+    A group's schedules are fetched at most once across every SP that reaches it
+    via `schedule_cache`. Its key is namespaced by the Graph resource path so the
+    cache never collides with other single-flight users (e.g. group-name lookups)
+    keyed by bare id.
+    """
+    roles: list[DirectoryRoleRecord] = []
+
+    active, eligible = await _principal_schedules(client, object_id)
+    roles.extend(
+        directory_role_from_schedule(s, "active", "direct", None) for s in active
+    )
+    roles.extend(
+        directory_role_from_schedule(s, "eligible", "direct", None) for s in eligible
+    )
+
+    seen_groups: set[str] = set()
+    for membership in memberships:
+        group_id = membership["groupId"]
+        if not membership["isAssignableToRole"] or group_id is None:
+            continue
+        if group_id in seen_groups:
+            continue
+        seen_groups.add(group_id)
+        source = membership["displayName"] or group_id
+
+        async def fetch(
+            gid: str = group_id, src: str = source
+        ) -> list[DirectoryRoleRecord]:
+            g_active, g_eligible = await _principal_schedules(client, gid)
+            return [
+                directory_role_from_schedule(s, "active", src, gid) for s in g_active
+            ] + [
+                directory_role_from_schedule(s, "eligible", src, gid)
+                for s in g_eligible
+            ]
+
+        roles.extend(
+            await schedule_cache.do(
+                f"/roleManagement/directory/schedules/{group_id}", fetch
+            )
+        )
+    return roles
+
+
+async def _collect_for_service_principal(
+    client: GraphServiceClient,
+    sp: ServicePrincipal,
+    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]],
+) -> ServicePrincipalRecord:
+    """Build a record for an already-resolved SP: Application, memberships, roles.
+
+    Each section degrades to an SP Gap in the record's `errors[]` rather than
+    aborting the whole SP (ADR-0002 two-tier failures). Directory-role
+    attribution depends on the collected memberships, so it runs after them.
     """
     record = await _record_with_application(client, sp)
     try:
@@ -272,15 +436,29 @@ async def _collect_for_service_principal(
         )
     except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
         record["errors"].append(f"Failed to collect group memberships: {exc}")
+    try:
+        record["directoryRoles"] = await collect_directory_roles(
+            client, record["objectId"], record["groupMemberships"], schedule_cache
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
+        record["errors"].append(f"Failed to collect directory roles: {exc}")
     return record
 
 
 async def collect_service_principal(
-    client: GraphServiceClient, object_id: str
+    client: GraphServiceClient,
+    object_id: str,
+    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] | None = None,
 ) -> ServicePrincipalRecord:
-    """Collect one Service Principal's identity, Application, and memberships."""
+    """Collect one Service Principal's identity, Application, memberships, roles.
+
+    `schedule_cache` is shared across SPs by the caller so a group's role
+    schedules are fetched once for a whole run; a lone call gets a private cache.
+    """
+    if schedule_cache is None:
+        schedule_cache = SingleFlight()
     sp = await _resolve_service_principal(client, object_id)
-    return await _collect_for_service_principal(client, sp)
+    return await _collect_for_service_principal(client, sp, schedule_cache)
 
 
 async def select_by_tag(client: GraphServiceClient, tag: str) -> list[ServicePrincipal]:
@@ -312,8 +490,13 @@ async def select_by_tag(client: GraphServiceClient, tag: str) -> list[ServicePri
 async def collect_by_tag(
     client: GraphServiceClient, tag: str
 ) -> list[ServicePrincipalRecord]:
-    """Collect every Service Principal carrying `tag` into records."""
+    """Collect every Service Principal carrying `tag` into records.
+
+    One `schedule_cache` is shared across the whole selection so a group reached
+    by many SPs has its directory-role schedules fetched once for the run.
+    """
+    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
     return [
-        await _collect_for_service_principal(client, sp)
+        await _collect_for_service_principal(client, sp, schedule_cache)
         for sp in await select_by_tag(client, tag)
     ]
