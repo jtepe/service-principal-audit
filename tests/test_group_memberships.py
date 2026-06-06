@@ -15,8 +15,8 @@ from msgraph.generated.models.directory_object import DirectoryObject
 from msgraph.generated.models.group import Group
 
 from sp_audit.entra import (
+    collect_by_object_ids,
     collect_group_memberships,
-    collect_service_principal,
     resolve_group_name,
 )
 from sp_audit.single_flight import SingleFlight
@@ -192,7 +192,8 @@ def test_membership_failure_records_sp_gap_and_continues(monkeypatch) -> None:
     failing_item = FakeSpItem(FailingMembersBuilder(), FailingMembersBuilder())
     client = cast(GraphServiceClient, FakeClient(item=failing_item))
 
-    record = asyncio.run(collect_service_principal(client, "sp-oid"))
+    records, _ = asyncio.run(collect_by_object_ids(client, ["sp-oid"]))
+    record = records[0]
 
     assert record["groupMemberships"] == []
     assert any("group membership" in err.lower() for err in record["errors"])

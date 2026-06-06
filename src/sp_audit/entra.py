@@ -445,15 +445,6 @@ async def _collect_for_service_principal(
     return record
 
 
-async def collect_service_principal(
-    client: GraphServiceClient, object_id: str
-) -> ServicePrincipalRecord:
-    """Collect one Service Principal's identity, Application, memberships, roles."""
-    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
-    sp = await _resolve_service_principal(client, object_id)
-    return await _collect_for_service_principal(client, sp, schedule_cache)
-
-
 async def collect_by_object_ids(
     client: GraphServiceClient, object_ids: list[str]
 ) -> tuple[list[ServicePrincipalRecord], list[str]]:
