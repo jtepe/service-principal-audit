@@ -104,10 +104,8 @@ async def _run(args: argparse.Namespace) -> int:
         client = GraphServiceClient(credentials=credential, scopes=[GRAPH_SCOPE])
         if args.tag is not None:
             selection = {"objectIds": [], "tag": args.tag}
-            try:
-                records = await collect_by_tag(client, args.tag)
-            except Exception as exc:  # noqa: BLE001 - degrade to Run Error, never abort
-                run_errors.append(f"Failed to select by tag '{args.tag}': {exc}")
+            records, tag_errors = await collect_by_tag(client, args.tag)
+            run_errors.extend(tag_errors)
             selection["objectIds"] = [r["objectId"] for r in records]
         else:
             object_ids = merge_object_ids(args.object_ids, file_ids)
