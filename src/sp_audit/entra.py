@@ -446,22 +446,41 @@ async def _collect_for_service_principal(
 
 
 async def collect_service_principal(
-    client: GraphServiceClient,
-    object_id: str,
-    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] | None = None,
+    client: GraphServiceClient, object_id: str
 ) -> ServicePrincipalRecord:
-    """Collect one Service Principal's identity, Application, memberships, roles.
-
-    `schedule_cache` is shared across SPs by the caller so a group's role
-    schedules are fetched once for a whole run; a lone call gets a private cache.
-    """
-    if schedule_cache is None:
-        schedule_cache = SingleFlight()
+    """Collect one Service Principal's identity, Application, memberships, roles."""
+    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
     sp = await _resolve_service_principal(client, object_id)
     return await _collect_for_service_principal(client, sp, schedule_cache)
 
 
-async def select_by_tag(client: GraphServiceClient, tag: str) -> list[ServicePrincipal]:
+async def collect_by_object_ids(
+    client: GraphServiceClient, object_ids: list[str]
+) -> tuple[list[ServicePrincipalRecord], list[str]]:
+    """Collect records for an explicit set of object ids.
+
+    Mirrors `collect_by_tag`: one `schedule_cache` is shared across the whole
+    selection so a group reached by many SPs has its directory-role schedules
+    fetched once for the run. A per-id resolution/collection failure degrades to
+    a Run Error (returned alongside the records) rather than aborting the run.
+    """
+    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
+    records: list[ServicePrincipalRecord] = []
+    run_errors: list[str] = []
+    for object_id in object_ids:
+        try:
+            sp = await _resolve_service_principal(client, object_id)
+            records.append(
+                await _collect_for_service_principal(client, sp, schedule_cache)
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
+            run_errors.append(f"Failed to collect '{object_id}': {exc}")
+    return records, run_errors
+
+
+async def _select_by_tag(
+    client: GraphServiceClient, tag: str
+) -> list[ServicePrincipal]:
     """Select Service Principals by tag, paging through all results.
 
     Queries `tags/any(c:c eq '{tag}')` with OData single-quote escaping and
@@ -498,5 +517,5 @@ async def collect_by_tag(
     schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
     return [
         await _collect_for_service_principal(client, sp, schedule_cache)
-        for sp in await select_by_tag(client, tag)
+        for sp in await _select_by_tag(client, tag)
     ]
