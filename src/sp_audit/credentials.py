@@ -39,26 +39,6 @@ def credential_status(
     return "active"
 
 
-def _credential_record(
-    credential: GraphCredential,
-    owner: Owner,
-    credential_type: Literal["secret", "certificate"],
-    now: datetime.datetime,
-) -> CredentialRecord:
-    start = credential.start_date_time
-    end = credential.end_date_time
-    key_id = credential.key_id
-    return {
-        "owner": owner,
-        "credentialType": credential_type,
-        "displayName": credential.display_name,
-        "keyId": str(key_id) if key_id is not None else None,
-        "startDateTime": start.isoformat() if start is not None else None,
-        "endDateTime": end.isoformat() if end is not None else None,
-        "status": credential_status(start, end, now),
-    }
-
-
 def map_credentials(
     owner: Owner,
     password_credentials: list[PasswordCredential] | None,
@@ -71,12 +51,27 @@ def map_credentials(
     emitted in that order, each tagged with `owner` and its `credentialType` and
     carrying a status derived against the injected `now`.
     """
-    records = [
-        _credential_record(secret, owner, "secret", now)
-        for secret in password_credentials or []
+    collections: list[
+        tuple[list[GraphCredential], Literal["secret", "certificate"]]
+    ] = [
+        (list(password_credentials or []), "secret"),
+        (list(key_credentials or []), "certificate"),
     ]
-    records.extend(
-        _credential_record(certificate, owner, "certificate", now)
-        for certificate in key_credentials or []
-    )
+    records: list[CredentialRecord] = []
+    for credentials, credential_type in collections:
+        for credential in credentials:
+            start = credential.start_date_time
+            end = credential.end_date_time
+            key_id = credential.key_id
+            records.append(
+                {
+                    "owner": owner,
+                    "credentialType": credential_type,
+                    "displayName": credential.display_name,
+                    "keyId": str(key_id) if key_id is not None else None,
+                    "startDateTime": start.isoformat() if start is not None else None,
+                    "endDateTime": end.isoformat() if end is not None else None,
+                    "status": credential_status(start, end, now),
+                }
+            )
     return records

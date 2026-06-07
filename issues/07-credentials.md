@@ -1,5 +1,5 @@
 ---
-labels: [completed]
+labels: [implemented]
 ---
 
 # Credentials — secrets and certificates with derived status
