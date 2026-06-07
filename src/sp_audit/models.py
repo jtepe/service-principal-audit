@@ -46,12 +46,16 @@ class GroupMembershipRecord(TypedDict):
     one reached only through nesting (`transitiveMemberOf`). `isAssignableToRole`
     is the Graph flag that decides whether a directory role targeting the group
     is actually attributed to the SP (see CONTEXT.md, Via-group attribution).
+    `pimMembership` records how the SP holds a role-assignable group via
+    PIM-for-Groups — standing (`assigned`), `eligible`, or `none` — and is `None`
+    for memberships where it does not apply (non-role-assignable groups).
     """
 
     groupId: str | None
     displayName: str | None
     membershipType: Literal["direct", "transitive"]
     isAssignableToRole: bool | None
+    pimMembership: Literal["assigned", "eligible", "none"] | None
 
 
 class DirectoryRoleRecord(TypedDict):
