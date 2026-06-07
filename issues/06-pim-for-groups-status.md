@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent]
+labels: [completed]
 ---
 
 # PIM-for-Groups membership status
@@ -22,13 +22,29 @@ Directory-Readers-only user hitting PIM) degrades to an SP Gap.
 
 ## Acceptance criteria
 
-- [ ] Both PIM-for-Groups schedule calls are always issued with a `principalId`
-      `$filter`.
-- [ ] Each role-assignable group membership gets `pimMembership` set to
-      `assigned`, `eligible`, or `none`.
-- [ ] `member` vs `owner` `accessId` is handled so role-inheritance reasoning uses
-      `member`.
-- [ ] A 403/400 on a PIM call records an SP Gap and the run continues.
+- [x] Both PIM-for-Groups schedule calls are always issued with a `principalId`
+      `$filter`. — `collect_pim_for_groups` builds both `assignmentSchedules` and
+      `eligibilitySchedules` requests with a `principalId eq '{id}'` filter.
+- [x] Each role-assignable group membership gets `pimMembership` set to
+      `assigned`, `eligible`, or `none`. — `apply_pim_membership` maps an active
+      assignment to `assigned`, an eligibility to `eligible`, and a
+      role-assignable group in neither to `none`; non-role-assignable memberships
+      stay `None`.
+- [x] `member` vs `owner` `accessId` is handled so role-inheritance reasoning uses
+      `member`. — `_member_group_ids` keeps only schedules with
+      `accessId = member`, dropping `owner` access.
+- [x] A 403/400 on a PIM call records an SP Gap and the run continues. — the PIM
+      collection in `_collect_for_service_principal` is wrapped so any failure
+      appends a "Failed to collect PIM-for-Groups status" SP Gap to the record's
+      `errors[]` without aborting the run.
+
+## Notes
+
+- Pure annotation logic (`apply_pim_membership`, `_member_group_ids`) is unit
+  tested in `tests/test_pim_membership.py`; the Graph I/O collector
+  (`collect_pim_for_groups`) stays untested per the PRD's pure-modules-only
+  testing decision.
+- `pimMembership` was added to `GroupMembershipRecord` in `models.py`.
 
 ## Blocked by
 

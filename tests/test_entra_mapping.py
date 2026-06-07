@@ -37,6 +37,7 @@ def test_group_membership_mapping_labels_membership_type() -> None:
         "displayName": "role-assignable-group",
         "membershipType": "direct",
         "isAssignableToRole": True,
+        "pimMembership": None,
     }
     assert group_membership_from_graph(group, "transitive")["membershipType"] == (
         "transitive"
