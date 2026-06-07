@@ -379,24 +379,33 @@ async def _resolve_application(
     return matches[0] if matches else None
 
 
+async def _page_all(
+    builder: Any, config: RequestConfiguration | None = None
+) -> list[Any]:
+    """Follow `@odata.nextLink` over any collection builder, returning all items.
+
+    The single paging primitive: every collector pages through this and shapes
+    or filters the result itself (e.g. `_page_groups` keeps only `Group`s).
+    """
+    items: list[Any] = []
+    page = await builder.get(request_configuration=config)
+    while page is not None:
+        items.extend(page.value or [])
+        next_link = page.odata_next_link
+        if not next_link:
+            break
+        page = await builder.with_url(next_link).get()
+    return items
+
+
 async def _page_groups(builder: Any, config: RequestConfiguration) -> list[Group]:
-    """Follow `@odata.nextLink` over a membership builder, keeping only groups.
+    """Page a membership builder, keeping only groups.
 
     `memberOf`/`transitiveMemberOf` return mixed directory objects (groups,
     directory roles, administrative units); only `Group` entries are memberships
     in the sense this audit cares about.
     """
-    groups: list[Group] = []
-    page = await builder.get(request_configuration=config)
-    while page is not None:
-        for obj in page.value or []:
-            if isinstance(obj, Group):
-                groups.append(obj)
-        next_link = page.odata_next_link
-        if not next_link:
-            break
-        page = await builder.with_url(next_link).get()
-    return groups
+    return [obj for obj in await _page_all(builder, config) if isinstance(obj, Group)]
 
 
 async def collect_group_memberships(
@@ -460,27 +469,6 @@ async def resolve_group_name(
     return await single_flight.do(f"/groups/{group_id}", fetch)
 
 
-async def _page_schedules(
-    builder: Any, config: RequestConfiguration
-) -> list[RoleSchedule]:
-    """Follow `@odata.nextLink` over a role-schedule builder, collecting items.
-
-    Shared by the active (`roleAssignmentSchedules`) and eligible
-    (`roleEligibilitySchedules`) endpoints, whose collection responses share the
-    `RoleSchedule` shape (`roleDefinition`, `directoryScopeId`,
-    `scheduleInfo`).
-    """
-    schedules: list[RoleSchedule] = []
-    page = await builder.get(request_configuration=config)
-    while page is not None:
-        schedules.extend(page.value or [])
-        next_link = page.odata_next_link
-        if not next_link:
-            break
-        page = await builder.with_url(next_link).get()
-    return schedules
-
-
 async def _principal_schedules(
     client: GraphServiceClient, principal_id: str
 ) -> tuple[list[RoleSchedule], list[RoleSchedule]]:
@@ -504,10 +492,8 @@ async def _principal_schedules(
         )
     )
     directory = client.role_management.directory
-    active = await _page_schedules(directory.role_assignment_schedules, active_config)
-    eligible = await _page_schedules(
-        directory.role_eligibility_schedules, eligible_config
-    )
+    active = await _page_all(directory.role_assignment_schedules, active_config)
+    eligible = await _page_all(directory.role_eligibility_schedules, eligible_config)
     return active, eligible
 
 
@@ -643,21 +629,6 @@ async def _resolve_resource(
         return resource.display_name, app_role_value_map(resource)
 
     return await resource_cache.do(f"/servicePrincipals/{resource_id}", fetch)
-
-
-async def _page_all(
-    builder: Any, config: RequestConfiguration | None = None
-) -> list[Any]:
-    """Follow `@odata.nextLink` over a collection builder, returning all items."""
-    items: list[Any] = []
-    page = await builder.get(request_configuration=config)
-    while page is not None:
-        items.extend(page.value or [])
-        next_link = page.odata_next_link
-        if not next_link:
-            break
-        page = await builder.with_url(next_link).get()
-    return items
 
 
 async def collect_api_permissions(

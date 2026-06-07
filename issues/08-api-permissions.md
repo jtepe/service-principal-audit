@@ -1,5 +1,5 @@
 ---
-labels: [completed]
+labels: [Implemented]
 ---
 
 # API permissions — application and delegated
