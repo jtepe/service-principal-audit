@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import datetime
+import uuid
 
+from msgraph.generated.models.app_role import AppRole
+from msgraph.generated.models.app_role_assignment import AppRoleAssignment
 from msgraph.generated.models.application import Application
 from msgraph.generated.models.expiration_pattern import ExpirationPattern
 from msgraph.generated.models.group import Group
+from msgraph.generated.models.o_auth2_permission_grant import OAuth2PermissionGrant
 from msgraph.generated.models.request_schedule import RequestSchedule
 from msgraph.generated.models.service_principal import ServicePrincipal
 from msgraph.generated.models.unified_role_assignment_schedule import (
@@ -18,9 +22,13 @@ from msgraph.generated.models.unified_role_eligibility_schedule import (
 )
 
 from sp_audit.entra import (
+    app_role_value_map,
+    application_permission_from_graph,
     application_record_from_graph,
+    delegated_permission_from_graph,
     directory_role_from_schedule,
     group_membership_from_graph,
+    resolve_app_role_value,
     sp_record_from_graph,
 )
 
@@ -64,6 +72,8 @@ def test_sp_record_carries_identity_tags_and_null_application() -> None:
         "groupMemberships": [],
         "directoryRoles": [],
         "credentials": [],
+        "applicationPermissions": [],
+        "delegatedPermissions": [],
         "errors": [],
     }
 
@@ -147,3 +157,87 @@ def test_sp_without_object_id_is_rejected() -> None:
         pass
     else:  # pragma: no cover
         raise AssertionError("expected ValueError for missing object id")
+
+
+def test_delegated_permission_mapping_splits_scopes() -> None:
+    grant = OAuth2PermissionGrant(
+        resource_id="res-1",
+        scope="User.Read Mail.Read   Files.Read.All",
+        consent_type="Principal",
+        principal_id="user-1",
+    )
+
+    assert delegated_permission_from_graph(grant, "Microsoft Graph") == {
+        "resourceId": "res-1",
+        "resourceDisplayName": "Microsoft Graph",
+        "scopes": ["User.Read", "Mail.Read", "Files.Read.All"],
+        "consentType": "Principal",
+        "principalId": "user-1",
+    }
+
+
+def test_delegated_permission_mapping_tolerates_missing_scope() -> None:
+    grant = OAuth2PermissionGrant(
+        resource_id="res-1", scope=None, consent_type="AllPrincipals"
+    )
+
+    record = delegated_permission_from_graph(grant, None)
+
+    assert record["scopes"] == []
+    assert record["consentType"] == "AllPrincipals"
+    assert record["principalId"] is None
+
+
+def test_app_role_value_map_keeps_enabled_named_roles() -> None:
+    sp = ServicePrincipal(
+        app_roles=[
+            AppRole(
+                id=uuid.UUID("aaaaaaaa-0000-0000-0000-000000000001"),
+                value="User.Read.All",
+            ),
+            AppRole(
+                id=uuid.UUID("aaaaaaaa-0000-0000-0000-000000000002"),
+                value="Mail.Read",
+            ),
+        ]
+    )
+
+    assert app_role_value_map(sp) == {
+        "aaaaaaaa-0000-0000-0000-000000000001": "User.Read.All",
+        "aaaaaaaa-0000-0000-0000-000000000002": "Mail.Read",
+    }
+
+
+def test_resolve_app_role_value_resolves_named_role() -> None:
+    role_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000001")
+    roles = {"aaaaaaaa-0000-0000-0000-000000000001": "User.Read.All"}
+
+    assert resolve_app_role_value(role_id, roles) == "User.Read.All"
+
+
+def test_resolve_app_role_value_handles_default_access_guid() -> None:
+    zero = uuid.UUID("00000000-0000-0000-0000-000000000000")
+
+    assert resolve_app_role_value(zero, {}) == "default access"
+
+
+def test_resolve_app_role_value_unknown_guid_is_none() -> None:
+    role_id = uuid.UUID("bbbbbbbb-0000-0000-0000-000000000009")
+
+    assert resolve_app_role_value(role_id, {}) is None
+
+
+def test_application_permission_mapping_carries_resolved_value() -> None:
+    assignment = AppRoleAssignment(
+        resource_id=uuid.UUID("cccccccc-0000-0000-0000-000000000001"),
+        app_role_id=uuid.UUID("aaaaaaaa-0000-0000-0000-000000000001"),
+    )
+
+    assert application_permission_from_graph(
+        assignment, "Microsoft Graph", "User.Read.All"
+    ) == {
+        "resourceId": "cccccccc-0000-0000-0000-000000000001",
+        "resourceDisplayName": "Microsoft Graph",
+        "appRoleId": "aaaaaaaa-0000-0000-0000-000000000001",
+        "permission": "User.Read.All",
+    }

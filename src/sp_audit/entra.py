@@ -27,8 +27,10 @@ from msgraph.generated.identity_governance.privileged_access.group.assignment_sc
 from msgraph.generated.identity_governance.privileged_access.group.eligibility_schedules.eligibility_schedules_request_builder import (  # noqa: E501
     EligibilitySchedulesRequestBuilder,
 )
+from msgraph.generated.models.app_role_assignment import AppRoleAssignment
 from msgraph.generated.models.application import Application
 from msgraph.generated.models.group import Group
+from msgraph.generated.models.o_auth2_permission_grant import OAuth2PermissionGrant
 from msgraph.generated.models.privileged_access_group_assignment_schedule import (
     PrivilegedAccessGroupAssignmentSchedule,
 )
@@ -66,12 +68,22 @@ from msgraph.generated.service_principals.service_principals_request_builder imp
 
 from .credentials import map_credentials
 from .models import (
+    ApplicationPermissionRecord,
     ApplicationRecord,
+    DelegatedPermissionRecord,
     DirectoryRoleRecord,
     GroupMembershipRecord,
     ServicePrincipalRecord,
 )
 from .single_flight import SingleFlight
+
+# The all-zero appRole GUID is Graph's "default access" marker, not a named role.
+DEFAULT_ACCESS_APP_ROLE = "00000000-0000-0000-0000-000000000000"
+
+# Resource SPs are fetched once per resourceId and reused across every SP and
+# both permission planes; the cached value is the resource's display name plus
+# its appRoleId -> value map.
+type ResourceInfo = tuple[str | None, dict[str, str]]
 
 # Unified $select so SP-side fields are never path-dependent across the
 # selection routes (by object id, appId-eq fallback, and tag query). Every SP
@@ -93,6 +105,7 @@ APP_SELECT = [
     "keyCredentials",
 ]
 GROUP_SELECT = ["id", "displayName", "isAssignableToRole"]
+RESOURCE_SELECT = ["id", "displayName", "appId", "appRoles"]
 
 # Both directory-role schedule kinds share the same readable shape
 # (`roleDefinition`, `directoryScopeId`, `scheduleInfo`); `scheduleInfo` lives on
@@ -136,6 +149,8 @@ def sp_record_from_graph(
         "groupMemberships": [],
         "directoryRoles": [],
         "credentials": [],
+        "applicationPermissions": [],
+        "delegatedPermissions": [],
         "errors": [],
     }
 
@@ -238,6 +253,75 @@ def directory_role_from_schedule(
         "directoryScopeId": schedule.directory_scope_id,
         "startDateTime": start.isoformat() if start is not None else None,
         "endDateTime": end.isoformat() if end is not None else None,
+    }
+
+
+def app_role_value_map(resource: ServicePrincipal) -> dict[str, str]:
+    """Build a resource SP's `appRoleId -> value` map for permission resolution.
+
+    Pure: no network. Roles without an id or value are dropped — they cannot be
+    matched against an assignment's `appRoleId` nor surfaced as a name.
+    """
+    return {
+        str(role.id): role.value
+        for role in resource.app_roles or []
+        if role.id is not None and role.value is not None
+    }
+
+
+def resolve_app_role_value(app_role_id: Any, app_roles: dict[str, str]) -> str | None:
+    """Resolve an `appRoleId` GUID to its human-readable value.
+
+    Pure: no network. The all-zero GUID is Graph's "default access" marker, not a
+    named role. An unknown GUID degrades to `None` rather than the raw GUID, which
+    is retained separately on the record.
+    """
+    if app_role_id is None:
+        return None
+    role_id = str(app_role_id)
+    if role_id == DEFAULT_ACCESS_APP_ROLE:
+        return "default access"
+    return app_roles.get(role_id)
+
+
+def application_permission_from_graph(
+    assignment: AppRoleAssignment,
+    resource_display_name: str | None,
+    permission: str | None,
+) -> ApplicationPermissionRecord:
+    """Map a Graph `appRoleAssignment` onto an application permission record.
+
+    Pure: no network. The resource display name and resolved `permission` value
+    are supplied by the caller, which threads them through the resourceId cache.
+    """
+    return {
+        "resourceId": (
+            str(assignment.resource_id) if assignment.resource_id is not None else None
+        ),
+        "resourceDisplayName": resource_display_name,
+        "appRoleId": (
+            str(assignment.app_role_id) if assignment.app_role_id is not None else None
+        ),
+        "permission": permission,
+    }
+
+
+def delegated_permission_from_graph(
+    grant: OAuth2PermissionGrant, resource_display_name: str | None
+) -> DelegatedPermissionRecord:
+    """Map a Graph `oauth2PermissionGrant` onto a delegated permission record.
+
+    Pure: no network. The space-delimited `scope` string is split into a list;
+    `principalId` is meaningful only for the `Principal` consent type.
+    """
+    return {
+        "resourceId": (
+            str(grant.resource_id) if grant.resource_id is not None else None
+        ),
+        "resourceDisplayName": resource_display_name,
+        "scopes": grant.scope.split() if grant.scope else [],
+        "consentType": grant.consent_type,
+        "principalId": grant.principal_id,
     }
 
 
@@ -533,10 +617,97 @@ async def collect_directory_roles(
     return roles
 
 
+async def _resolve_resource(
+    client: GraphServiceClient,
+    resource_cache: SingleFlight[str, ResourceInfo],
+    resource_id: str,
+) -> ResourceInfo:
+    """Resolve a resource SP to its display name and `appRoleId -> value` map.
+
+    Backed by `resource_cache`, keyed by the Graph resource path: the Microsoft
+    Graph SP — targeted by most assignments — is fetched once and reused across
+    every SP and both permission planes for the whole run.
+    """
+
+    async def fetch() -> ResourceInfo:
+        config = RequestConfiguration(
+            query_parameters=ServicePrincipalItemRequestBuilder.ServicePrincipalItemRequestBuilderGetQueryParameters(
+                select=RESOURCE_SELECT,
+            )
+        )
+        resource = await client.service_principals.by_service_principal_id(
+            resource_id
+        ).get(request_configuration=config)
+        if resource is None:
+            return None, {}
+        return resource.display_name, app_role_value_map(resource)
+
+    return await resource_cache.do(f"/servicePrincipals/{resource_id}", fetch)
+
+
+async def _page_all(
+    builder: Any, config: RequestConfiguration | None = None
+) -> list[Any]:
+    """Follow `@odata.nextLink` over a collection builder, returning all items."""
+    items: list[Any] = []
+    page = await builder.get(request_configuration=config)
+    while page is not None:
+        items.extend(page.value or [])
+        next_link = page.odata_next_link
+        if not next_link:
+            break
+        page = await builder.with_url(next_link).get()
+    return items
+
+
+async def collect_api_permissions(
+    client: GraphServiceClient,
+    object_id: str,
+    resource_cache: SingleFlight[str, ResourceInfo],
+) -> tuple[list[ApplicationPermissionRecord], list[DelegatedPermissionRecord]]:
+    """Collect the SP's application and delegated API permissions.
+
+    Application permissions (`appRoleAssignments`) resolve their `appRoleId` to a
+    human-readable value through the resource SP's `appRoles`; delegated
+    permissions (`oauth2PermissionGrants`) resolve only their resource display
+    name. Both resolutions go through `resource_cache` keyed by `resourceId`, so a
+    resource SP is fetched once per run.
+    """
+    sp_item = client.service_principals.by_service_principal_id(object_id)
+
+    application_permissions: list[ApplicationPermissionRecord] = []
+    for assignment in await _page_all(sp_item.app_role_assignments):
+        resource_id = assignment.resource_id
+        display_name, app_roles = (None, {})
+        if resource_id is not None:
+            display_name, app_roles = await _resolve_resource(
+                client, resource_cache, str(resource_id)
+            )
+        permission = resolve_app_role_value(assignment.app_role_id, app_roles)
+        application_permissions.append(
+            application_permission_from_graph(assignment, display_name, permission)
+        )
+
+    delegated_permissions: list[DelegatedPermissionRecord] = []
+    for grant in await _page_all(sp_item.oauth2_permission_grants):
+        resource_id = grant.resource_id
+        display_name = None
+        if resource_id is not None:
+            display_name, _ = await _resolve_resource(
+                client, resource_cache, str(resource_id)
+            )
+        delegated_permissions.append(
+            delegated_permission_from_graph(grant, display_name)
+        )
+
+    return application_permissions, delegated_permissions
+
+
 async def _collect_for_service_principal(
     client: GraphServiceClient,
     sp: ServicePrincipal,
     schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]],
+    resource_cache: SingleFlight[str, ResourceInfo],
 ) -> ServicePrincipalRecord:
     """Build a record for an already-resolved SP: Application, memberships, roles.
 
@@ -590,6 +761,14 @@ async def _collect_for_service_principal(
         )
     except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
         record["errors"].append(f"Failed to collect directory roles: {exc}")
+    try:
+        application_permissions, delegated_permissions = await collect_api_permissions(
+            client, record["objectId"], resource_cache
+        )
+        record["applicationPermissions"] = application_permissions
+        record["delegatedPermissions"] = delegated_permissions
+    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
+        record["errors"].append(f"Failed to collect API permissions: {exc}")
     return record
 
 
@@ -599,18 +778,23 @@ async def _collect_all(
     """Collect a list of already-resolved SPs into records, isolating failures.
 
     Shared by both selection paths so a per-SP failure never aborts the batch.
-    One `schedule_cache` is shared across the whole selection so a group reached
-    by many SPs has its directory-role schedules fetched once for the run. Per-SP
-    sections already degrade to SP Gaps; an unexpected collection failure here
-    degrades to a Run Error rather than dropping every other SP.
+    One `schedule_cache` and one `resource_cache` are shared across the whole
+    selection so a group's directory-role schedules and a resource SP's
+    appRoles/display name are each fetched once for the run, regardless of how
+    many SPs reach them. Per-SP sections already degrade to SP Gaps; an unexpected
+    collection failure here degrades to a Run Error rather than dropping every
+    other SP.
     """
     schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
+    resource_cache: SingleFlight[str, ResourceInfo] = SingleFlight()
     records: list[ServicePrincipalRecord] = []
     run_errors: list[str] = []
     for sp in service_principals:
         try:
             records.append(
-                await _collect_for_service_principal(client, sp, schedule_cache)
+                await _collect_for_service_principal(
+                    client, sp, schedule_cache, resource_cache
+                )
             )
         except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
             run_errors.append(f"Failed to collect '{sp.id}': {exc}")
