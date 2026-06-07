@@ -20,6 +20,7 @@ from msgraph.generated.models.unified_role_definition import UnifiedRoleDefiniti
 from msgraph.generated.models.unified_role_eligibility_schedule import (
     UnifiedRoleEligibilitySchedule,
 )
+from msgraph.generated.models.user import User
 
 from sp_audit.entra import (
     app_role_value_map,
@@ -28,6 +29,7 @@ from sp_audit.entra import (
     delegated_permission_from_graph,
     directory_role_from_schedule,
     group_membership_from_graph,
+    owner_from_graph,
     resolve_app_role_value,
     sp_record_from_graph,
 )
@@ -74,6 +76,7 @@ def test_sp_record_carries_identity_tags_and_null_application() -> None:
         "credentials": [],
         "applicationPermissions": [],
         "delegatedPermissions": [],
+        "owners": [],
         "errors": [],
     }
 
@@ -225,6 +228,37 @@ def test_resolve_app_role_value_unknown_guid_is_none() -> None:
     role_id = uuid.UUID("bbbbbbbb-0000-0000-0000-000000000009")
 
     assert resolve_app_role_value(role_id, {}) is None
+
+
+def test_owner_mapping_tags_a_human_owner_of_the_service_principal() -> None:
+    owner = User(id="u-1", display_name="Ada Lovelace")
+
+    assert owner_from_graph(owner, "servicePrincipal") == {
+        "owner": "servicePrincipal",
+        "ownerType": "user",
+        "id": "u-1",
+        "displayName": "Ada Lovelace",
+    }
+
+
+def test_owner_mapping_surfaces_sp_owns_application_privilege_chain() -> None:
+    owner = ServicePrincipal(id="sp-9", display_name="deploy-pipeline-sp")
+
+    assert owner_from_graph(owner, "application") == {
+        "owner": "application",
+        "ownerType": "servicePrincipal",
+        "id": "sp-9",
+        "displayName": "deploy-pipeline-sp",
+    }
+
+
+def test_owner_mapping_recognises_a_group_owner() -> None:
+    owner = Group(id="g-3", display_name="platform-admins")
+
+    record = owner_from_graph(owner, "servicePrincipal")
+
+    assert record["ownerType"] == "group"
+    assert record["id"] == "g-3"
 
 
 def test_application_permission_mapping_carries_resolved_value() -> None:
