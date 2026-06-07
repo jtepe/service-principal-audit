@@ -62,6 +62,7 @@ def test_sp_record_carries_identity_tags_and_null_application() -> None:
         "azureRoleAssignments": [],
         "groupMemberships": [],
         "directoryRoles": [],
+        "credentials": [],
         "errors": [],
     }
 
