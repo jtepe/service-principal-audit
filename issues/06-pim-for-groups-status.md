@@ -1,5 +1,5 @@
 ---
-labels: [completed]
+labels: [implemented]
 ---
 
 # PIM-for-Groups membership status
