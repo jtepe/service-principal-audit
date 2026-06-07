@@ -547,8 +547,6 @@ async def _collect_for_service_principal(
     attribution depends on the collected memberships, so it runs after them.
     """
     record = sp_record_from_graph(sp, None)
-    # One injected "now" derives every Credential status for this SP, keeping the
-    # SP-side and Application-side flattening consistent within the record.
     now = datetime.now(UTC)
     record["credentials"] = map_credentials(
         "servicePrincipal", sp.password_credentials, sp.key_credentials, now
@@ -570,8 +568,6 @@ async def _collect_for_service_principal(
                     )
                 )
             else:
-                # No local Application (managed identity, gallery, cross-tenant):
-                # application stays null, SP-side credentials still report.
                 record["errors"].append(
                     f"No Application object found for appId '{sp.app_id}' (SP Gap)"
                 )
