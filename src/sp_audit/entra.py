@@ -9,6 +9,7 @@ unit-tested without a live Graph client.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from kiota_abstractions.api_error import APIError
@@ -63,6 +64,7 @@ from msgraph.generated.service_principals.service_principals_request_builder imp
     ServicePrincipalsRequestBuilder,
 )
 
+from .credentials import map_credentials
 from .models import (
     ApplicationRecord,
     DirectoryRoleRecord,
@@ -83,7 +85,13 @@ SP_SELECT = [
     "passwordCredentials",
     "keyCredentials",
 ]
-APP_SELECT = ["id", "displayName", "appId"]
+APP_SELECT = [
+    "id",
+    "displayName",
+    "appId",
+    "passwordCredentials",
+    "keyCredentials",
+]
 GROUP_SELECT = ["id", "displayName", "isAssignableToRole"]
 
 # Both directory-role schedule kinds share the same readable shape
@@ -127,6 +135,7 @@ def sp_record_from_graph(
         "azureRoleAssignments": [],
         "groupMemberships": [],
         "directoryRoles": [],
+        "credentials": [],
         "errors": [],
     }
 
@@ -538,6 +547,12 @@ async def _collect_for_service_principal(
     attribution depends on the collected memberships, so it runs after them.
     """
     record = sp_record_from_graph(sp, None)
+    # One injected "now" derives every Credential status for this SP, keeping the
+    # SP-side and Application-side flattening consistent within the record.
+    now = datetime.now(UTC)
+    record["credentials"] = map_credentials(
+        "servicePrincipal", sp.password_credentials, sp.key_credentials, now
+    )
     if sp.app_id:
         try:
             application = await _resolve_application(client, sp.app_id)
@@ -546,6 +561,20 @@ async def _collect_for_service_principal(
         else:
             if application is not None:
                 record["application"] = application_record_from_graph(application)
+                record["credentials"].extend(
+                    map_credentials(
+                        "application",
+                        application.password_credentials,
+                        application.key_credentials,
+                        now,
+                    )
+                )
+            else:
+                # No local Application (managed identity, gallery, cross-tenant):
+                # application stays null, SP-side credentials still report.
+                record["errors"].append(
+                    f"No Application object found for appId '{sp.app_id}' (SP Gap)"
+                )
     try:
         record["groupMemberships"] = await collect_group_memberships(
             client, record["objectId"]

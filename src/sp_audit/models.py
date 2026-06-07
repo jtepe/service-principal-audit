@@ -78,6 +78,27 @@ class DirectoryRoleRecord(TypedDict):
     endDateTime: str | None
 
 
+class CredentialRecord(TypedDict):
+    """A secret or certificate that can authenticate as the identity.
+
+    Carried in `ServicePrincipalRecord.credentials`, flattened from both the
+    Service Principal and its Application. `owner` records which object holds it
+    (`application`/`servicePrincipal`); `credentialType` is `secret` for a
+    password credential and `certificate` for a key credential. `status` is
+    derived from both dates against a timezone-aware UTC now; the raw
+    `startDateTime`/`endDateTime` are retained so "expiring soon" stays a
+    consumer-side judgment.
+    """
+
+    owner: Literal["application", "servicePrincipal"]
+    credentialType: Literal["secret", "certificate"]
+    displayName: str | None
+    keyId: str | None
+    startDateTime: str | None
+    endDateTime: str | None
+    status: Literal["active", "expired", "not-yet-valid"]
+
+
 class ServicePrincipalRecord(TypedDict):
     """A single audited Service Principal: identity, tags, attached Application."""
 
@@ -89,6 +110,7 @@ class ServicePrincipalRecord(TypedDict):
     azureRoleAssignments: list[AzureRoleAssignment]
     groupMemberships: list[GroupMembershipRecord]
     directoryRoles: list[DirectoryRoleRecord]
+    credentials: list[CredentialRecord]
     errors: list[str]
 
 

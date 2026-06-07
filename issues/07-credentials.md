@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent]
+labels: [completed]
 ---
 
 # Credentials — secrets and certificates with derived status
@@ -23,17 +23,31 @@ consumer-side judgment.
 
 ## Acceptance criteria
 
-- [ ] `credentials[]` includes secrets and certificates from both the SP and the
+- [x] `credentials[]` includes secrets and certificates from both the SP and the
       Application, each tagged with `owner` and `credentialType`
       (`secret`/`certificate`).
-- [ ] Each credential has a `status` of `active`/`expired`/`not-yet-valid` derived
+- [x] Each credential has a `status` of `active`/`expired`/`not-yet-valid` derived
       from both dates; raw `startDateTime`/`endDateTime` are retained.
-- [ ] An SP with no Application object yields `application: null`, an SP Gap note,
+- [x] An SP with no Application object yields `application: null`, an SP Gap note,
       and still reports SP-side credentials.
-- [ ] Status uses a timezone-aware UTC comparison.
-- [ ] Unit tests cover `credentials`: end in past → `expired`; start in future →
+- [x] Status uses a timezone-aware UTC comparison.
+- [x] Unit tests cover `credentials`: end in past → `expired`; start in future →
       `not-yet-valid`; start past & end future/null → `active`; all against an
       injected now; secret/certificate mapping from the two collections.
+
+## Implementation notes
+
+Implemented the pure `sp_audit.credentials` module (`map_credentials` +
+`credential_status`), flattening Graph `passwordCredentials`/`keyCredentials`
+from both the SP and its Application into one `credentials[]` array tagged with
+`owner`/`credentialType` and a status derived from both dates against an injected
+UTC now. Added `CredentialRecord` to `models` and a `credentials` field on
+`ServicePrincipalRecord`; wired SP-side and Application-side collection into
+`entra._collect_for_service_principal` (one injected `now` per SP), extending
+`APP_SELECT` to fetch the Application's credentials and recording an SP Gap when
+no local Application resolves. Tests live in `tests/test_credentials.py`; the
+I/O-bound `entra` wiring is intentionally untested per the PRD (tests target the
+pure modules only).
 
 ## Blocked by
 
