@@ -1,75 +1,277 @@
-[
-  {
-    "displayName": "app-frontend-sp",
-    "applicationId": "11111111-1111-1111-1111-111111111111",
-    "objectId": "22222222-2222-2222-2222-222222222222",
-    "roleAssignmentsCount": 3,
-    "roleAssignments": [
-      {
-        "subscriptionName": "Production Sub 1",
-        "subscriptionId": "33333333-3333-3333-3333-333333333333",
-        "scopeType": "Subscription",
-        "scope": "/subscriptions/33333333-3333-3333-3333-333333333333",
-        "roleName": "Reader"
-      },
-      {
-        "subscriptionName": "Production Sub 1",
-        "subscriptionId": "33333333-3333-3333-3333-333333333333",
-        "scopeType": "Resource Group",
-        "scope": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/frontend-rg",
-        "roleName": "Storage Blob Data Reader"
-      },
-      {
-        "subscriptionName": "Production Sub 2",
-        "subscriptionId": "44444444-4444-4444-4444-444444444444",
-        "scopeType": "Resource Group",
-        "scope": "/subscriptions/44444444-4444-4444-4444-444444444444/resourceGroups/app-rg",
-        "roleName": "Contributor"
-      }
+{
+  "meta": {
+    "generatedAt": "2026-06-07T09:30:00+00:00",
+    "tenantId": "00000000-0000-0000-0000-0000000000aa",
+    "selection": {
+      "objectIds": [
+        "22222222-2222-2222-2222-222222222222",
+        "66666666-6666-6666-6666-666666666666",
+        "99999999-9999-9999-9999-999999999999",
+        "cccccccc-cccc-cccc-cccc-cccccccccccc"
+      ],
+      "tag": "terraform-iac"
+    },
+    "toolVersion": "0.1.0",
+    "runErrors": [
+      "Azure RBAC query returned partial results: 1 of 2 batches timed out; some Azure Role Assignments may be missing."
     ]
   },
-  {
-    "displayName": "data-pipeline-sp",
-    "applicationId": "55555555-5555-5555-5555-555555555555",
-    "objectId": "66666666-6666-6666-6666-666666666666",
-    "roleAssignmentsCount": 2,
-    "roleAssignments": [
-      {
-        "subscriptionName": "Analytics Sub",
-        "subscriptionId": "77777777-7777-7777-7777-777777777777",
-        "scopeType": "Resource",
-        "scope": "/subscriptions/77777777-7777-7777-7777-777777777777/resourceGroups/data-rg/providers/Microsoft.Storage/storageAccounts/datalake01",
-        "roleName": "Storage Blob Data Contributor"
+  "servicePrincipals": [
+    {
+      "objectId": "22222222-2222-2222-2222-222222222222",
+      "appId": "11111111-1111-1111-1111-111111111111",
+      "displayName": "app-frontend-sp",
+      "tags": ["terraform-iac", "team:web"],
+      "application": {
+        "objectId": "1a1a1a1a-1a1a-1a1a-1a1a-1a1a1a1a1a1a",
+        "appId": "11111111-1111-1111-1111-111111111111",
+        "displayName": "app-frontend"
       },
-      {
-        "subscriptionName": "Analytics Sub",
-        "subscriptionId": "77777777-7777-7777-7777-777777777777",
-        "scopeType": "Subscription",
-        "scope": "/subscriptions/77777777-7777-7777-7777-777777777777",
-        "roleName": "Reader"
-      }
-    ]
-  },
-  {
-    "displayName": "infra-terraform-sp",
-    "applicationId": "88888888-8888-8888-8888-888888888888",
-    "objectId": "99999999-9999-9999-9999-999999999999",
-    "roleAssignmentsCount": 1,
-    "roleAssignments": [
-      {
-        "subscriptionName": "Platform Sub",
-        "subscriptionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        "scopeType": "Subscription",
-        "scope": "/subscriptions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-        "roleName": "Owner"
-      }
-    ]
-  },
-  {
-    "displayName": "observability-sp",
-    "applicationId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    "objectId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
-    "roleAssignmentsCount": 0,
-    "roleAssignments": []
-  }
-]
+      "azureRoleAssignments": [
+        {
+          "roleName": "Reader",
+          "scopeType": "Management Group",
+          "scope": "/providers/Microsoft.Management/managementGroups/mg-platform",
+          "subscriptionId": null,
+          "subscriptionName": null,
+          "managementGroupId": "mg-platform"
+        },
+        {
+          "roleName": "Storage Blob Data Reader",
+          "scopeType": "Resource Group",
+          "scope": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/frontend-rg",
+          "subscriptionId": "33333333-3333-3333-3333-333333333333",
+          "subscriptionName": "Production Sub 1",
+          "managementGroupId": null
+        },
+        {
+          "roleName": "Contributor",
+          "scopeType": "Resource",
+          "scope": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/frontend-rg/providers/Microsoft.Web/sites/frontend-app",
+          "subscriptionId": "33333333-3333-3333-3333-333333333333",
+          "subscriptionName": "Production Sub 1",
+          "managementGroupId": null
+        }
+      ],
+      "groupMemberships": [
+        {
+          "groupId": "a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0",
+          "displayName": "grp-platform-admins",
+          "membershipType": "direct",
+          "isAssignableToRole": true,
+          "pimMembership": "eligible"
+        },
+        {
+          "groupId": "b0b0b0b0-b0b0-b0b0-b0b0-b0b0b0b0b0b0",
+          "displayName": "grp-web-team",
+          "membershipType": "transitive",
+          "isAssignableToRole": false,
+          "pimMembership": null
+        }
+      ],
+      "directoryRoles": [
+        {
+          "roleName": "Global Reader",
+          "assignmentType": "active",
+          "source": "direct",
+          "sourceGroupId": null,
+          "directoryScopeId": "/",
+          "startDateTime": "2025-11-01T00:00:00Z",
+          "endDateTime": null
+        },
+        {
+          "roleName": "Privileged Role Administrator",
+          "assignmentType": "eligible",
+          "source": "grp-platform-admins",
+          "sourceGroupId": "a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0",
+          "directoryScopeId": "/",
+          "startDateTime": "2026-01-15T00:00:00Z",
+          "endDateTime": "2026-12-31T00:00:00Z"
+        }
+      ],
+      "credentials": [
+        {
+          "owner": "application",
+          "credentialType": "secret",
+          "displayName": "rotating-secret",
+          "keyId": "c1c1c1c1-c1c1-c1c1-c1c1-c1c1c1c1c1c1",
+          "startDateTime": "2026-01-01T00:00:00Z",
+          "endDateTime": "2026-12-31T00:00:00Z",
+          "status": "active"
+        },
+        {
+          "owner": "application",
+          "credentialType": "certificate",
+          "displayName": "legacy-signing-cert",
+          "keyId": "c2c2c2c2-c2c2-c2c2-c2c2-c2c2c2c2c2c2",
+          "startDateTime": "2023-01-01T00:00:00Z",
+          "endDateTime": "2025-01-01T00:00:00Z",
+          "status": "expired"
+        },
+        {
+          "owner": "servicePrincipal",
+          "credentialType": "secret",
+          "displayName": "pre-provisioned-secret",
+          "keyId": "c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3",
+          "startDateTime": "2026-09-01T00:00:00Z",
+          "endDateTime": "2027-09-01T00:00:00Z",
+          "status": "not-yet-valid"
+        }
+      ],
+      "applicationPermissions": [
+        {
+          "resourceId": "d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0",
+          "resourceDisplayName": "Microsoft Graph",
+          "appRoleId": "df021288-bdef-4463-88db-98f22de89214",
+          "permission": "User.Read.All"
+        },
+        {
+          "resourceId": "d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0",
+          "resourceDisplayName": "Microsoft Graph",
+          "appRoleId": "19dbc75e-c2e2-444c-a770-ec69d8559fc7",
+          "permission": "Directory.ReadWrite.All"
+        }
+      ],
+      "delegatedPermissions": [
+        {
+          "resourceId": "d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0",
+          "resourceDisplayName": "Microsoft Graph",
+          "scopes": ["User.Read", "openid", "profile"],
+          "consentType": "AllPrincipals",
+          "principalId": null
+        }
+      ],
+      "owners": [
+        {
+          "owner": "application",
+          "ownerType": "user",
+          "id": "e0e0e0e0-e0e0-e0e0-e0e0-e0e0e0e0e0e0",
+          "displayName": "Dana Owner"
+        },
+        {
+          "owner": "servicePrincipal",
+          "ownerType": "servicePrincipal",
+          "id": "99999999-9999-9999-9999-999999999999",
+          "displayName": "infra-terraform-sp"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "objectId": "66666666-6666-6666-6666-666666666666",
+      "appId": null,
+      "displayName": "data-pipeline-mi",
+      "tags": ["terraform-iac"],
+      "application": null,
+      "azureRoleAssignments": [
+        {
+          "roleName": "Storage Blob Data Contributor",
+          "scopeType": "Resource",
+          "scope": "/subscriptions/77777777-7777-7777-7777-777777777777/resourceGroups/data-rg/providers/Microsoft.Storage/storageAccounts/datalake01",
+          "subscriptionId": "77777777-7777-7777-7777-777777777777",
+          "subscriptionName": "Analytics Sub",
+          "managementGroupId": null
+        }
+      ],
+      "groupMemberships": [],
+      "directoryRoles": [],
+      "credentials": [],
+      "applicationPermissions": [],
+      "delegatedPermissions": [],
+      "owners": [],
+      "errors": [
+        "directoryRoles: 403 from role-management schedule endpoint — needs Global Reader (Directory Readers cannot read role assignments).",
+        "pimMembership: 403 from PIM-for-Groups schedule endpoint."
+      ]
+    },
+    {
+      "objectId": "99999999-9999-9999-9999-999999999999",
+      "appId": "88888888-8888-8888-8888-888888888888",
+      "displayName": "infra-terraform-sp",
+      "tags": ["terraform-iac", "team:platform"],
+      "application": {
+        "objectId": "8a8a8a8a-8a8a-8a8a-8a8a-8a8a8a8a8a8a",
+        "appId": "88888888-8888-8888-8888-888888888888",
+        "displayName": "infra-terraform"
+      },
+      "azureRoleAssignments": [
+        {
+          "roleName": "Owner",
+          "scopeType": "Management Group",
+          "scope": "/providers/Microsoft.Management/managementGroups/mg-platform",
+          "subscriptionId": null,
+          "subscriptionName": null,
+          "managementGroupId": "mg-platform"
+        }
+      ],
+      "groupMemberships": [
+        {
+          "groupId": "a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0",
+          "displayName": "grp-platform-admins",
+          "membershipType": "direct",
+          "isAssignableToRole": true,
+          "pimMembership": "assigned"
+        }
+      ],
+      "directoryRoles": [
+        {
+          "roleName": "Application Administrator",
+          "assignmentType": "active",
+          "source": "grp-platform-admins",
+          "sourceGroupId": "a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0",
+          "directoryScopeId": "/",
+          "startDateTime": "2025-06-01T00:00:00Z",
+          "endDateTime": null
+        }
+      ],
+      "credentials": [
+        {
+          "owner": "application",
+          "credentialType": "certificate",
+          "displayName": "tf-deploy-cert",
+          "keyId": "c9c9c9c9-c9c9-c9c9-c9c9-c9c9c9c9c9c9",
+          "startDateTime": "2025-06-01T00:00:00Z",
+          "endDateTime": "2027-06-01T00:00:00Z",
+          "status": "active"
+        }
+      ],
+      "applicationPermissions": [
+        {
+          "resourceId": "d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0",
+          "resourceDisplayName": "Microsoft Graph",
+          "appRoleId": "06b708a9-e830-4db3-a914-8e69da51d44f",
+          "permission": "AppRoleAssignment.ReadWrite.All"
+        }
+      ],
+      "delegatedPermissions": [],
+      "owners": [
+        {
+          "owner": "application",
+          "ownerType": "group",
+          "id": "f0f0f0f0-f0f0-f0f0-f0f0-f0f0f0f0f0f0",
+          "displayName": "grp-platform-owners"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "objectId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "appId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "displayName": "observability-sp",
+      "tags": ["terraform-iac"],
+      "application": {
+        "objectId": "babababa-baba-baba-baba-babababababa",
+        "appId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "displayName": "observability"
+      },
+      "azureRoleAssignments": [],
+      "groupMemberships": [],
+      "directoryRoles": [],
+      "credentials": [],
+      "applicationPermissions": [],
+      "delegatedPermissions": [],
+      "owners": [],
+      "errors": []
+    }
+  ]
+}

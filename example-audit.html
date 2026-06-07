@@ -2,319 +2,232 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Azure RBAC Audit Report</title>
+<title>Service Principal Audit Report</title>
 <style>
-  :root {
-    --bg: #f6f7f9;
-    --fg: #1f2933;
-    --muted: #62707d;
-    --accent: #0b6bcb;
-    --row-a: #ffffff;
-    --row-b: #eef2f7;
-    --sub-bg: #f9fafb;
-    --border: #d8dee6;
-    --chip-bg: #e3ecf7;
-    --chip-fg: #0b3d75;
-    --match-bg: #fff2a8;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      "Helvetica Neue", Arial, sans-serif;
-    background: var(--bg);
-    color: var(--fg);
-    line-height: 1.45;
-  }
-  header {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: #ffffff;
-    border-bottom: 1px solid var(--border);
-    padding: 16px 24px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-  }
-  header h1 {
-    margin: 0 0 8px 0;
-    font-size: 18px;
-    font-weight: 600;
-  }
-  .toolbar {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  #search {
-    flex: 1;
-    min-width: 260px;
-    padding: 8px 12px;
-    font-size: 14px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    outline: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
-  }
-  #search:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(11, 107, 203, 0.15);
-  }
-  .hint {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .hint kbd {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-bottom-width: 2px;
-    border-radius: 4px;
-    padding: 0 6px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
-  }
-  #count {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  main {
-    padding: 0 24px 32px 24px;
-  }
-  .sp {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin: 16px 0;
-    overflow: hidden;
-  }
-  .sp.row-a { background: var(--row-a); }
-  .sp.row-b { background: var(--row-b); }
-  .sp-header {
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border);
-  }
-  .sp-name {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0 0 4px 0;
-  }
-  .sp-ids {
-    font-size: 12px;
-    color: var(--muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    word-break: break-all;
-  }
-  .sp-ids .label {
-    color: var(--fg);
-    font-family: inherit;
-    font-weight: 500;
-    margin-right: 4px;
-  }
-  .sp-ids .id-row { margin-top: 2px; }
-  .no-roles {
-    padding: 14px 18px;
-    color: var(--muted);
-    font-style: italic;
-  }
-  .sub {
-    padding: 12px 18px;
-    border-top: 1px solid var(--border);
-    background: var(--sub-bg);
-  }
-  .sp.row-b .sub { background: #e4e9f0; }
-  .sub:first-of-type { border-top: none; }
-  .sub-header {
-    display: flex;
-    gap: 8px;
-    align-items: baseline;
-    flex-wrap: wrap;
-    margin-bottom: 8px;
-  }
-  .sub-name {
-    font-weight: 600;
-    font-size: 14px;
-  }
-  .sub-id {
-    font-size: 12px;
-    color: var(--muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-  .perms {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-  .perm {
-    padding: 6px 0;
-    border-top: 1px dashed var(--border);
-    font-size: 13px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 10px;
-    align-items: baseline;
-  }
-  .perm:first-child { border-top: none; }
-  .role {
-    background: var(--chip-bg);
-    color: var(--chip-fg);
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-weight: 600;
-    font-size: 12px;
-    white-space: nowrap;
-  }
-  .scope {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
-    word-break: break-all;
-    color: var(--fg);
-  }
-  .scope-type {
-    color: var(--muted);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .hidden { display: none !important; }
-  mark.match {
-    background: var(--match-bg);
-    color: inherit;
-    padding: 0 1px;
-    border-radius: 2px;
-  }
-  .empty {
-    text-align: center;
-    color: var(--muted);
-    padding: 48px 0;
-    font-style: italic;
-  }
+:root {
+  --bg: #f6f7f9; --fg: #1f2933; --muted: #62707d; --accent: #0b6bcb;
+  --border: #d8dee6; --card: #ffffff; --chip: #e3ecf7; --chip-fg: #0b3d75;
+  --ok: #1a7f37; --ok-bg: #e6f4ea; --warn: #9a6700; --warn-bg: #fff8e1;
+  --bad: #b3261e; --bad-bg: #fce8e6; --mg-bg: #efe7fb; --mg-fg: #5b2a86;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+  Roboto, Arial, sans-serif; background: var(--bg); color: var(--fg);
+  line-height: 1.45; }
+header { position: sticky; top: 0; z-index: 10; background: var(--card);
+  border-bottom: 1px solid var(--border); padding: 14px 24px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+header h1 { margin: 0 0 8px; font-size: 18px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px;
+  color: var(--muted); margin-bottom: 10px; }
+.meta .label, .sp-ids .label { font-weight: 600; color: var(--fg);
+  margin-right: 4px; }
+.toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+#search { flex: 1; min-width: 260px; padding: 8px 12px; font-size: 14px;
+  border: 1px solid var(--border); border-radius: 6px; outline: none; }
+#search:focus { border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(11,107,203,0.15); }
+#count, .hint { color: var(--muted); font-size: 12px; }
+.hint kbd { background: var(--bg); border: 1px solid var(--border);
+  border-bottom-width: 2px; border-radius: 4px; padding: 0 6px;
+  font-family: var(--mono); font-size: 11px; }
+main { padding: 8px 24px 40px; }
+.sp { background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; margin: 16px 0; padding: 16px 18px; }
+.sp-name { margin: 0 0 4px; font-size: 16px; }
+.sp-ids { font-family: var(--mono); font-size: 12px; color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 4px 16px; word-break: break-all; }
+.section-title { font-size: 12px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted); margin: 16px 0 6px;
+  border-top: 1px solid var(--border); padding-top: 10px; }
+.empty { color: var(--muted); font-style: italic; margin: 4px 0; }
+ul.creds, ul.drs, ul.ras { list-style: none; margin: 0; padding: 0; }
+.cred, .dr, .ra { display: flex; flex-wrap: wrap; gap: 6px 10px;
+  align-items: baseline; padding: 5px 0; border-top: 1px dashed var(--border);
+  font-size: 13px; }
+.cred:first-child, .dr:first-child, .ra:first-child { border-top: none; }
+.cred-status, .dr-type { font-size: 11px; font-weight: 700; padding: 1px 8px;
+  border-radius: 10px; text-transform: uppercase; letter-spacing: 0.03em; }
+.status-active .cred-status { background: var(--ok-bg); color: var(--ok); }
+.status-expired .cred-status { background: var(--bad-bg); color: var(--bad); }
+.status-not-yet-valid .cred-status { background: var(--warn-bg); color: var(--warn); }
+.status-expired { background: var(--bad-bg); border-radius: 6px;
+  padding-left: 8px; padding-right: 8px; }
+.cred-type, .cred-owner, .dr-source, .ra-scope-type { font-size: 11px;
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.cred-name, .dr-role, .ra-role { font-weight: 600; }
+.cred-dates, .ra-scope { font-family: var(--mono); font-size: 12px;
+  color: var(--muted); word-break: break-all; }
+.dr-type { background: var(--chip); color: var(--chip-fg); }
+.scope-bucket { margin: 8px 0; border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 12px; }
+.scope-bucket-management-group { background: var(--mg-bg);
+  border-color: #d3c2ee; }
+.scope-bucket-management-group .bucket-kind { color: var(--mg-fg); }
+.bucket-head { font-size: 13px; margin-bottom: 6px; }
+.bucket-kind { font-size: 11px; text-transform: uppercase; font-weight: 700;
+  letter-spacing: 0.04em; margin-right: 8px; }
+.bucket-name { font-weight: 600; }
+.raw-sections { margin-top: 4px; }
+details { border: 1px solid var(--border); border-radius: 6px;
+  margin: 6px 0; background: var(--bg); }
+summary { cursor: pointer; padding: 6px 12px; font-size: 13px;
+  font-weight: 600; }
+pre.raw-json { margin: 0; padding: 12px; overflow-x: auto; font-family: var(--mono);
+  font-size: 12px; background: #0f172a; color: #e2e8f0; border-radius: 0 0 6px 6px; }
+.errors { background: var(--bad-bg); border: 1px solid #f3b9b4;
+  border-radius: 6px; padding: 8px 12px; margin: 10px 0; font-size: 13px; }
+.errors ul { margin: 4px 0 0; padding-left: 18px; }
+.run-error, .sp-error { color: var(--bad); }
+.hidden { display: none !important; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Azure RBAC Audit Report</h1>
-  <div class="toolbar">
-    <input id="search" type="search" placeholder="Filter service principals (space-separated tokens, in order)..." autocomplete="off" spellcheck="false">
-    <span id="count"></span>
-    <span class="hint">Press <kbd>/</kbd> to focus, <kbd>Esc</kbd> to clear</span>
-  </div>
+<h1>Service Principal Audit Report</h1>
+<div class="meta"><span class="meta-item"><span class="label">Tenant</span> 00000000-0000-0000-0000-0000000000aa</span><span class="meta-item"><span class="label">Generated</span> 2026-06-07T09:30:00+00:00</span><span class="meta-item"><span class="label">Tool</span> 0.1.0</span><span class="meta-item"><span class="label">Selection</span> tag "terraform-iac"</span><span class="meta-item"><span class="label">Service principals</span> 4</span></div>
+<div class="toolbar">
+<input id="search" type="search" autocomplete="off" spellcheck="false"
+  placeholder="Filter by display name (space-separated tokens, in order)…">
+<span id="count"></span>
+<span class="hint">Press <kbd>/</kbd> to focus, <kbd>Esc</kbd> to clear</span>
+</div>
+<div class="errors"><strong>Run errors</strong><ul><li class="run-error">Azure RBAC query returned partial results: 1 of 2 batches timed out; some Azure Role Assignments may be missing.</li></ul></div>
 </header>
-<main id="report"></main>
-<script id="report-data" type="application/json">[{"displayName": "app-frontend-sp", "applicationId": "11111111-1111-1111-1111-111111111111", "objectId": "22222222-2222-2222-2222-222222222222", "roleAssignmentsCount": 3, "roleAssignments": [{"subscriptionName": "Production Sub 1", "subscriptionId": "33333333-3333-3333-3333-333333333333", "scopeType": "Subscription", "scope": "/subscriptions/33333333-3333-3333-3333-333333333333", "roleName": "Reader"}, {"subscriptionName": "Production Sub 1", "subscriptionId": "33333333-3333-3333-3333-333333333333", "scopeType": "Resource Group", "scope": "/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/frontend-rg", "roleName": "Storage Blob Data Reader"}, {"subscriptionName": "Production Sub 2", "subscriptionId": "44444444-4444-4444-4444-444444444444", "scopeType": "Resource Group", "scope": "/subscriptions/44444444-4444-4444-4444-444444444444/resourceGroups/app-rg", "roleName": "Contributor"}]}, {"displayName": "data-pipeline-sp", "applicationId": "55555555-5555-5555-5555-555555555555", "objectId": "66666666-6666-6666-6666-666666666666", "roleAssignmentsCount": 2, "roleAssignments": [{"subscriptionName": "Analytics Sub", "subscriptionId": "77777777-7777-7777-7777-777777777777", "scopeType": "Resource", "scope": "/subscriptions/77777777-7777-7777-7777-777777777777/resourceGroups/data-rg/providers/Microsoft.Storage/storageAccounts/datalake01", "roleName": "Storage Blob Data Contributor"}, {"subscriptionName": "Analytics Sub", "subscriptionId": "77777777-7777-7777-7777-777777777777", "scopeType": "Subscription", "scope": "/subscriptions/77777777-7777-7777-7777-777777777777", "roleName": "Reader"}]}, {"displayName": "infra-terraform-sp", "applicationId": "88888888-8888-8888-8888-888888888888", "objectId": "99999999-9999-9999-9999-999999999999", "roleAssignmentsCount": 1, "roleAssignments": [{"subscriptionName": "Platform Sub", "subscriptionId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "scopeType": "Subscription", "scope": "/subscriptions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "roleName": "Owner"}]}, {"displayName": "observability-sp", "applicationId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "objectId": "cccccccc-cccc-cccc-cccc-cccccccccccc", "roleAssignmentsCount": 0, "roleAssignments": []}]</script>
+<main id="report">
+<section class="sp" data-name="app-frontend-sp"><h2 class="sp-name">app-frontend-sp</h2><div class="sp-ids"><span class="id"><span class="label">objectId</span> 22222222-2222-2222-2222-222222222222</span><span class="id"><span class="label">appId</span> 11111111-1111-1111-1111-111111111111</span></div><h3 class="section-title">Directory Roles</h3><ul class="drs"><li class="dr assignment-active"><span class="dr-role">Global Reader</span> <span class="dr-type">active</span> <span class="dr-source dr-source-direct">direct</span></li><li class="dr assignment-eligible"><span class="dr-role">Privileged Role Administrator</span> <span class="dr-type">eligible</span> <span class="dr-source">via grp-platform-admins</span></li></ul><h3 class="section-title">Credentials</h3><ul class="creds"><li class="cred status-active"><span class="cred-status">active</span> <span class="cred-type">secret</span> <span class="cred-owner">application</span> <span class="cred-name">rotating-secret</span> <span class="cred-dates">2026-01-01T00:00:00Z → 2026-12-31T00:00:00Z</span></li><li class="cred status-expired"><span class="cred-status">EXPIRED</span> <span class="cred-type">certificate</span> <span class="cred-owner">application</span> <span class="cred-name">legacy-signing-cert</span> <span class="cred-dates">2023-01-01T00:00:00Z → 2025-01-01T00:00:00Z</span></li><li class="cred status-not-yet-valid"><span class="cred-status">not yet valid</span> <span class="cred-type">secret</span> <span class="cred-owner">servicePrincipal</span> <span class="cred-name">pre-provisioned-secret</span> <span class="cred-dates">2026-09-01T00:00:00Z → 2027-09-01T00:00:00Z</span></li></ul><h3 class="section-title">Azure Role Assignments</h3><div class="scope-bucket scope-bucket-management-group"><div class="bucket-head"><span class="bucket-kind">Management Group</span> <span class="bucket-name">mg-platform</span></div><ul class="ras"><li class="ra"><span class="ra-role">Reader</span> <span class="ra-scope-type">Management Group</span> <span class="ra-scope">/providers/Microsoft.Management/managementGroups/mg-platform</span></li></ul></div><div class="scope-bucket scope-bucket-subscription"><div class="bucket-head"><span class="bucket-kind">Subscription</span> <span class="bucket-name">Production Sub 1</span></div><ul class="ras"><li class="ra"><span class="ra-role">Contributor</span> <span class="ra-scope-type">Resource</span> <span class="ra-scope">/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/frontend-rg/providers/Microsoft.Web/sites/frontend-app</span></li><li class="ra"><span class="ra-role">Storage Blob Data Reader</span> <span class="ra-scope-type">Resource Group</span> <span class="ra-scope">/subscriptions/33333333-3333-3333-3333-333333333333/resourceGroups/frontend-rg</span></li></ul></div><h3 class="section-title">Details</h3><div class="raw-sections"><details><summary>Group memberships (2)</summary><pre class="raw-json">[
+  {
+    &quot;groupId&quot;: &quot;a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0&quot;,
+    &quot;displayName&quot;: &quot;grp-platform-admins&quot;,
+    &quot;membershipType&quot;: &quot;direct&quot;,
+    &quot;isAssignableToRole&quot;: true,
+    &quot;pimMembership&quot;: &quot;eligible&quot;
+  },
+  {
+    &quot;groupId&quot;: &quot;b0b0b0b0-b0b0-b0b0-b0b0-b0b0b0b0b0b0&quot;,
+    &quot;displayName&quot;: &quot;grp-web-team&quot;,
+    &quot;membershipType&quot;: &quot;transitive&quot;,
+    &quot;isAssignableToRole&quot;: false,
+    &quot;pimMembership&quot;: null
+  }
+]</pre></details><details><summary>Application permissions (2)</summary><pre class="raw-json">[
+  {
+    &quot;resourceId&quot;: &quot;d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0&quot;,
+    &quot;resourceDisplayName&quot;: &quot;Microsoft Graph&quot;,
+    &quot;appRoleId&quot;: &quot;df021288-bdef-4463-88db-98f22de89214&quot;,
+    &quot;permission&quot;: &quot;User.Read.All&quot;
+  },
+  {
+    &quot;resourceId&quot;: &quot;d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0&quot;,
+    &quot;resourceDisplayName&quot;: &quot;Microsoft Graph&quot;,
+    &quot;appRoleId&quot;: &quot;19dbc75e-c2e2-444c-a770-ec69d8559fc7&quot;,
+    &quot;permission&quot;: &quot;Directory.ReadWrite.All&quot;
+  }
+]</pre></details><details><summary>Delegated permissions (1)</summary><pre class="raw-json">[
+  {
+    &quot;resourceId&quot;: &quot;d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0&quot;,
+    &quot;resourceDisplayName&quot;: &quot;Microsoft Graph&quot;,
+    &quot;scopes&quot;: [
+      &quot;User.Read&quot;,
+      &quot;openid&quot;,
+      &quot;profile&quot;
+    ],
+    &quot;consentType&quot;: &quot;AllPrincipals&quot;,
+    &quot;principalId&quot;: null
+  }
+]</pre></details><details><summary>Owners (2)</summary><pre class="raw-json">[
+  {
+    &quot;owner&quot;: &quot;application&quot;,
+    &quot;ownerType&quot;: &quot;user&quot;,
+    &quot;id&quot;: &quot;e0e0e0e0-e0e0-e0e0-e0e0-e0e0e0e0e0e0&quot;,
+    &quot;displayName&quot;: &quot;Dana Owner&quot;
+  },
+  {
+    &quot;owner&quot;: &quot;servicePrincipal&quot;,
+    &quot;ownerType&quot;: &quot;servicePrincipal&quot;,
+    &quot;id&quot;: &quot;99999999-9999-9999-9999-999999999999&quot;,
+    &quot;displayName&quot;: &quot;infra-terraform-sp&quot;
+  }
+]</pre></details><details><summary>Identity &amp; application</summary><pre class="raw-json">{
+  &quot;objectId&quot;: &quot;22222222-2222-2222-2222-222222222222&quot;,
+  &quot;appId&quot;: &quot;11111111-1111-1111-1111-111111111111&quot;,
+  &quot;displayName&quot;: &quot;app-frontend-sp&quot;,
+  &quot;tags&quot;: [
+    &quot;terraform-iac&quot;,
+    &quot;team:web&quot;
+  ],
+  &quot;application&quot;: {
+    &quot;objectId&quot;: &quot;1a1a1a1a-1a1a-1a1a-1a1a-1a1a1a1a1a1a&quot;,
+    &quot;appId&quot;: &quot;11111111-1111-1111-1111-111111111111&quot;,
+    &quot;displayName&quot;: &quot;app-frontend&quot;
+  }
+}</pre></details></div></section><section class="sp" data-name="data-pipeline-mi"><h2 class="sp-name">data-pipeline-mi</h2><div class="sp-ids"><span class="id"><span class="label">objectId</span> 66666666-6666-6666-6666-666666666666</span><span class="id"><span class="label">appId</span> </span></div><div class="errors"><strong>Gaps for this service principal</strong><ul><li class="sp-error">directoryRoles: 403 from role-management schedule endpoint — needs Global Reader (Directory Readers cannot read role assignments).</li><li class="sp-error">pimMembership: 403 from PIM-for-Groups schedule endpoint.</li></ul></div><h3 class="section-title">Directory Roles</h3><p class="empty">No directory roles.</p><h3 class="section-title">Credentials</h3><p class="empty">No credentials.</p><h3 class="section-title">Azure Role Assignments</h3><div class="scope-bucket scope-bucket-subscription"><div class="bucket-head"><span class="bucket-kind">Subscription</span> <span class="bucket-name">Analytics Sub</span></div><ul class="ras"><li class="ra"><span class="ra-role">Storage Blob Data Contributor</span> <span class="ra-scope-type">Resource</span> <span class="ra-scope">/subscriptions/77777777-7777-7777-7777-777777777777/resourceGroups/data-rg/providers/Microsoft.Storage/storageAccounts/datalake01</span></li></ul></div><h3 class="section-title">Details</h3><div class="raw-sections"><details><summary>Group memberships (0)</summary><pre class="raw-json">[]</pre></details><details><summary>Application permissions (0)</summary><pre class="raw-json">[]</pre></details><details><summary>Delegated permissions (0)</summary><pre class="raw-json">[]</pre></details><details><summary>Owners (0)</summary><pre class="raw-json">[]</pre></details><details><summary>Identity &amp; application</summary><pre class="raw-json">{
+  &quot;objectId&quot;: &quot;66666666-6666-6666-6666-666666666666&quot;,
+  &quot;appId&quot;: null,
+  &quot;displayName&quot;: &quot;data-pipeline-mi&quot;,
+  &quot;tags&quot;: [
+    &quot;terraform-iac&quot;
+  ],
+  &quot;application&quot;: null
+}</pre></details></div></section><section class="sp" data-name="infra-terraform-sp"><h2 class="sp-name">infra-terraform-sp</h2><div class="sp-ids"><span class="id"><span class="label">objectId</span> 99999999-9999-9999-9999-999999999999</span><span class="id"><span class="label">appId</span> 88888888-8888-8888-8888-888888888888</span></div><h3 class="section-title">Directory Roles</h3><ul class="drs"><li class="dr assignment-active"><span class="dr-role">Application Administrator</span> <span class="dr-type">active</span> <span class="dr-source">via grp-platform-admins</span></li></ul><h3 class="section-title">Credentials</h3><ul class="creds"><li class="cred status-active"><span class="cred-status">active</span> <span class="cred-type">certificate</span> <span class="cred-owner">application</span> <span class="cred-name">tf-deploy-cert</span> <span class="cred-dates">2025-06-01T00:00:00Z → 2027-06-01T00:00:00Z</span></li></ul><h3 class="section-title">Azure Role Assignments</h3><div class="scope-bucket scope-bucket-management-group"><div class="bucket-head"><span class="bucket-kind">Management Group</span> <span class="bucket-name">mg-platform</span></div><ul class="ras"><li class="ra"><span class="ra-role">Owner</span> <span class="ra-scope-type">Management Group</span> <span class="ra-scope">/providers/Microsoft.Management/managementGroups/mg-platform</span></li></ul></div><h3 class="section-title">Details</h3><div class="raw-sections"><details><summary>Group memberships (1)</summary><pre class="raw-json">[
+  {
+    &quot;groupId&quot;: &quot;a0a0a0a0-a0a0-a0a0-a0a0-a0a0a0a0a0a0&quot;,
+    &quot;displayName&quot;: &quot;grp-platform-admins&quot;,
+    &quot;membershipType&quot;: &quot;direct&quot;,
+    &quot;isAssignableToRole&quot;: true,
+    &quot;pimMembership&quot;: &quot;assigned&quot;
+  }
+]</pre></details><details><summary>Application permissions (1)</summary><pre class="raw-json">[
+  {
+    &quot;resourceId&quot;: &quot;d0d0d0d0-d0d0-d0d0-d0d0-d0d0d0d0d0d0&quot;,
+    &quot;resourceDisplayName&quot;: &quot;Microsoft Graph&quot;,
+    &quot;appRoleId&quot;: &quot;06b708a9-e830-4db3-a914-8e69da51d44f&quot;,
+    &quot;permission&quot;: &quot;AppRoleAssignment.ReadWrite.All&quot;
+  }
+]</pre></details><details><summary>Delegated permissions (0)</summary><pre class="raw-json">[]</pre></details><details><summary>Owners (1)</summary><pre class="raw-json">[
+  {
+    &quot;owner&quot;: &quot;application&quot;,
+    &quot;ownerType&quot;: &quot;group&quot;,
+    &quot;id&quot;: &quot;f0f0f0f0-f0f0-f0f0-f0f0-f0f0f0f0f0f0&quot;,
+    &quot;displayName&quot;: &quot;grp-platform-owners&quot;
+  }
+]</pre></details><details><summary>Identity &amp; application</summary><pre class="raw-json">{
+  &quot;objectId&quot;: &quot;99999999-9999-9999-9999-999999999999&quot;,
+  &quot;appId&quot;: &quot;88888888-8888-8888-8888-888888888888&quot;,
+  &quot;displayName&quot;: &quot;infra-terraform-sp&quot;,
+  &quot;tags&quot;: [
+    &quot;terraform-iac&quot;,
+    &quot;team:platform&quot;
+  ],
+  &quot;application&quot;: {
+    &quot;objectId&quot;: &quot;8a8a8a8a-8a8a-8a8a-8a8a-8a8a8a8a8a8a&quot;,
+    &quot;appId&quot;: &quot;88888888-8888-8888-8888-888888888888&quot;,
+    &quot;displayName&quot;: &quot;infra-terraform&quot;
+  }
+}</pre></details></div></section><section class="sp" data-name="observability-sp"><h2 class="sp-name">observability-sp</h2><div class="sp-ids"><span class="id"><span class="label">objectId</span> cccccccc-cccc-cccc-cccc-cccccccccccc</span><span class="id"><span class="label">appId</span> bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb</span></div><h3 class="section-title">Directory Roles</h3><p class="empty">No directory roles.</p><h3 class="section-title">Credentials</h3><p class="empty">No credentials.</p><h3 class="section-title">Azure Role Assignments</h3><p class="empty">No Azure role assignments.</p><h3 class="section-title">Details</h3><div class="raw-sections"><details><summary>Group memberships (0)</summary><pre class="raw-json">[]</pre></details><details><summary>Application permissions (0)</summary><pre class="raw-json">[]</pre></details><details><summary>Delegated permissions (0)</summary><pre class="raw-json">[]</pre></details><details><summary>Owners (0)</summary><pre class="raw-json">[]</pre></details><details><summary>Identity &amp; application</summary><pre class="raw-json">{
+  &quot;objectId&quot;: &quot;cccccccc-cccc-cccc-cccc-cccccccccccc&quot;,
+  &quot;appId&quot;: &quot;bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb&quot;,
+  &quot;displayName&quot;: &quot;observability-sp&quot;,
+  &quot;tags&quot;: [
+    &quot;terraform-iac&quot;
+  ],
+  &quot;application&quot;: {
+    &quot;objectId&quot;: &quot;babababa-baba-baba-baba-babababababa&quot;,
+    &quot;appId&quot;: &quot;bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb&quot;,
+    &quot;displayName&quot;: &quot;observability&quot;
+  }
+}</pre></details></div></section>
+</main>
 <script>
 (function () {
-  const data = JSON.parse(document.getElementById('report-data').textContent);
-  const report = document.getElementById('report');
   const search = document.getElementById('search');
   const countEl = document.getElementById('count');
+  const sps = Array.from(document.querySelectorAll('.sp'));
 
-  function escapeHtml(s) {
-    if (s === null || s === undefined) return '';
-    return String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function groupBySubscription(assignments) {
-    const groups = new Map();
-    for (const ra of assignments || []) {
-      const key = (ra.subscriptionId || '') + '||' + (ra.subscriptionName || '');
-      if (!groups.has(key)) {
-        groups.set(key, {
-          subscriptionId: ra.subscriptionId,
-          subscriptionName: ra.subscriptionName,
-          items: [],
-        });
-      }
-      groups.get(key).items.push(ra);
-    }
-    return Array.from(groups.values()).sort((a, b) => {
-      const an = (a.subscriptionName || a.subscriptionId || '').toLowerCase();
-      const bn = (b.subscriptionName || b.subscriptionId || '').toLowerCase();
-      return an.localeCompare(bn);
-    });
-  }
-
-  function renderSp(sp, idx) {
-    const rowClass = idx % 2 === 0 ? 'row-a' : 'row-b';
-    const name = sp.displayName || '(unnamed service principal)';
-    const parts = [];
-    parts.push('<section class="sp ' + rowClass + '" data-name="' +
-      escapeHtml((sp.displayName || '').toLowerCase()) + '">');
-    parts.push('<div class="sp-header">');
-    parts.push('<div class="sp-name">' + escapeHtml(name) + '</div>');
-    parts.push('<div class="sp-ids">');
-    if (sp.applicationId) {
-      parts.push('<div class="id-row"><span class="label">Client ID:</span>' +
-        escapeHtml(sp.applicationId) + '</div>');
-    }
-    if (sp.objectId) {
-      parts.push('<div class="id-row"><span class="label">Object ID:</span>' +
-        escapeHtml(sp.objectId) + '</div>');
-    }
-    parts.push('</div>');
-    parts.push('</div>');
-
-    const groups = groupBySubscription(sp.roleAssignments);
-    if (groups.length === 0) {
-      parts.push('<div class="no-roles">No role assignments found.</div>');
-    } else {
-      for (const g of groups) {
-        parts.push('<div class="sub">');
-        parts.push('<div class="sub-header">');
-        parts.push('<span class="sub-name">' +
-          escapeHtml(g.subscriptionName || '(no subscription name)') + '</span>');
-        if (g.subscriptionId) {
-          parts.push('<span class="sub-id">' + escapeHtml(g.subscriptionId) + '</span>');
-        }
-        parts.push('</div>');
-        parts.push('<ul class="perms">');
-        const items = g.items.slice().sort((a, b) => {
-          const ar = (a.roleName || '').toLowerCase();
-          const br = (b.roleName || '').toLowerCase();
-          if (ar !== br) return ar.localeCompare(br);
-          return (a.scope || '').localeCompare(b.scope || '');
-        });
-        for (const ra of items) {
-          parts.push('<li class="perm">');
-          parts.push('<span class="role">' +
-            escapeHtml(ra.roleName || '(unknown role)') + '</span>');
-          if (ra.scopeType) {
-            parts.push('<span class="scope-type">' +
-              escapeHtml(ra.scopeType) + '</span>');
-          }
-          parts.push('<span class="scope">' +
-            escapeHtml(ra.scope || '') + '</span>');
-          parts.push('</li>');
-        }
-        parts.push('</ul>');
-        parts.push('</div>');
-      }
-    }
-    parts.push('</section>');
-    return parts.join('');
-  }
-
-  function renderAll() {
-    if (!data.length) {
-      report.innerHTML = '<div class="empty">No service principals in this report.</div>';
-      countEl.textContent = '0 service principals';
-      return;
-    }
-    const sorted = data.slice().sort((a, b) => {
-      const an = (a.displayName || '').toLowerCase();
-      const bn = (b.displayName || '').toLowerCase();
-      return an.localeCompare(bn);
-    });
-    report.innerHTML = sorted.map(renderSp).join('');
-    updateCount();
-  }
-
-  // Case-insensitive multi-token match: the query is split on whitespace and
-  // each token must appear as a substring of the candidate, in the order
-  // given. E.g. "sp app-" matches "sp-terraform-app-gateway".
+  // Case-insensitive multi-token match: each whitespace-separated token must
+  // appear as a substring of the name, in order. "infra app" matches
+  // "infra-terraform-app".
   function nameMatches(query, candidate) {
     const tokens = (query || '').toLowerCase().split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return true;
@@ -329,45 +242,25 @@
   }
 
   function updateCount() {
-    const total = report.querySelectorAll('.sp').length;
-    const visible = report.querySelectorAll('.sp:not(.hidden)').length;
-    if (visible === total) {
-      countEl.textContent = total + ' service principal' + (total === 1 ? '' : 's');
-    } else {
-      countEl.textContent = visible + ' / ' + total + ' shown';
-    }
-  }
-
-  function reassignAlternating() {
-    let idx = 0;
-    for (const el of report.querySelectorAll('.sp')) {
-      if (el.classList.contains('hidden')) continue;
-      el.classList.remove('row-a', 'row-b');
-      el.classList.add(idx % 2 === 0 ? 'row-a' : 'row-b');
-      idx++;
-    }
+    const visible = sps.filter((el) => !el.classList.contains('hidden')).length;
+    countEl.textContent = visible === sps.length
+      ? sps.length + ' service principal' + (sps.length === 1 ? '' : 's')
+      : visible + ' / ' + sps.length + ' shown';
   }
 
   function applyFilter() {
     const q = search.value.trim();
-    for (const el of report.querySelectorAll('.sp')) {
+    for (const el of sps) {
       const name = el.getAttribute('data-name') || '';
-      const visible = nameMatches(q, name);
-      el.classList.toggle('hidden', !visible);
+      el.classList.toggle('hidden', !nameMatches(q, name));
     }
-    reassignAlternating();
     updateCount();
   }
 
   search.addEventListener('input', applyFilter);
   search.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      search.value = '';
-      applyFilter();
-      search.blur();
-    }
+    if (e.key === 'Escape') { search.value = ''; applyFilter(); search.blur(); }
   });
-
   document.addEventListener('keydown', (e) => {
     if (e.key === '/' && document.activeElement !== search) {
       const tag = (document.activeElement && document.activeElement.tagName) || '';
@@ -378,7 +271,7 @@
     }
   });
 
-  renderAll();
+  updateCount();
 })();
 </script>
 </body>
