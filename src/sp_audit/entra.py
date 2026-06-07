@@ -20,8 +20,23 @@ from msgraph.generated.applications.applications_request_builder import (
 from msgraph.generated.groups.item.group_item_request_builder import (
     GroupItemRequestBuilder,
 )
+from msgraph.generated.identity_governance.privileged_access.group.assignment_schedules.assignment_schedules_request_builder import (  # noqa: E501
+    AssignmentSchedulesRequestBuilder,
+)
+from msgraph.generated.identity_governance.privileged_access.group.eligibility_schedules.eligibility_schedules_request_builder import (  # noqa: E501
+    EligibilitySchedulesRequestBuilder,
+)
 from msgraph.generated.models.application import Application
 from msgraph.generated.models.group import Group
+from msgraph.generated.models.privileged_access_group_assignment_schedule import (
+    PrivilegedAccessGroupAssignmentSchedule,
+)
+from msgraph.generated.models.privileged_access_group_eligibility_schedule import (
+    PrivilegedAccessGroupEligibilitySchedule,
+)
+from msgraph.generated.models.privileged_access_group_relationships import (
+    PrivilegedAccessGroupRelationships,
+)
 from msgraph.generated.models.service_principal import ServicePrincipal
 from msgraph.generated.models.unified_role_assignment_schedule import (
     UnifiedRoleAssignmentSchedule,
@@ -122,14 +137,68 @@ def group_membership_from_graph(
     """Map a Graph Group onto a membership record, labeling how it is held.
 
     Pure: no network. `membership_type` is supplied by the caller — `member_of`
-    yields `direct`, `transitiveMemberOf` yields `transitive`.
+    yields `direct`, `transitiveMemberOf` yields `transitive`. `pimMembership`
+    starts unset (`None`); `apply_pim_membership` fills it in once the
+    PIM-for-Groups schedules are collected.
     """
     return {
         "groupId": group.id,
         "displayName": group.display_name,
         "membershipType": membership_type,
         "isAssignableToRole": group.is_assignable_to_role,
+        "pimMembership": None,
     }
+
+
+type PimSchedule = (
+    PrivilegedAccessGroupAssignmentSchedule | PrivilegedAccessGroupEligibilitySchedule
+)
+
+
+def _member_group_ids(schedules: list[PimSchedule]) -> set[str]:
+    """Group ids the SP holds with `accessId = member` (not `owner`).
+
+    Role inheritance flows through *member* PIM-for-Groups access, never owner
+    access, so owner schedules are dropped here.
+    """
+    return {
+        schedule.group_id
+        for schedule in schedules
+        if schedule.group_id is not None
+        and schedule.access_id == PrivilegedAccessGroupRelationships.Member
+    }
+
+
+def apply_pim_membership(
+    memberships: list[GroupMembershipRecord],
+    active_schedules: list[PrivilegedAccessGroupAssignmentSchedule],
+    eligible_schedules: list[PrivilegedAccessGroupEligibilitySchedule],
+) -> list[GroupMembershipRecord]:
+    """Annotate each role-assignable membership with its PIM-for-Groups status.
+
+    Pure: no network. `active_schedules` are PIM-for-Groups assignment schedules
+    (standing membership → `assigned`); `eligible_schedules` are eligibility
+    schedules (must-activate membership → `eligible`); a role-assignable group in
+    neither is `none`. Only `member` access counts (see `_member_group_ids`).
+    Non-role-assignable memberships are left at `None`, since PIM-for-Groups
+    status is only meaningful for role-inheritance reasoning. Returns new records;
+    inputs are not mutated.
+    """
+    active = _member_group_ids(list(active_schedules))
+    eligible = _member_group_ids(list(eligible_schedules))
+    annotated: list[GroupMembershipRecord] = []
+    for membership in memberships:
+        pim: Literal["assigned", "eligible", "none"] | None = None
+        if membership["isAssignableToRole"]:
+            group_id = membership["groupId"]
+            if group_id in active:
+                pim = "assigned"
+            elif group_id in eligible:
+                pim = "eligible"
+            else:
+                pim = "none"
+        annotated.append({**membership, "pimMembership": pim})
+    return annotated
 
 
 def directory_role_from_schedule(
@@ -349,6 +418,53 @@ async def _principal_schedules(
     return active, eligible
 
 
+async def _page_pim_schedules(
+    builder: Any, config: RequestConfiguration
+) -> list[PimSchedule]:
+    """Follow `@odata.nextLink` over a PIM-for-Groups schedule builder."""
+    schedules: list[PimSchedule] = []
+    page = await builder.get(request_configuration=config)
+    while page is not None:
+        schedules.extend(page.value or [])
+        next_link = page.odata_next_link
+        if not next_link:
+            break
+        page = await builder.with_url(next_link).get()
+    return schedules
+
+
+async def collect_pim_for_groups(
+    client: GraphServiceClient, principal_id: str
+) -> tuple[
+    list[PrivilegedAccessGroupAssignmentSchedule],
+    list[PrivilegedAccessGroupEligibilitySchedule],
+]:
+    """Fetch the SP's (active, eligible) PIM-for-Groups membership schedules.
+
+    Both endpoints return HTTP 400 without a `$filter`, so each is always issued
+    with a `principalId` filter; `groupId` and `accessId` are then read off the
+    results by `apply_pim_membership`. Returns standing-membership (assignment)
+    schedules and must-activate (eligibility) schedules separately.
+    """
+    escaped = principal_id.replace("'", "''")
+    active_config = RequestConfiguration(
+        query_parameters=AssignmentSchedulesRequestBuilder.AssignmentSchedulesRequestBuilderGetQueryParameters(
+            filter=f"principalId eq '{escaped}'",
+        )
+    )
+    eligible_config = RequestConfiguration(
+        query_parameters=EligibilitySchedulesRequestBuilder.EligibilitySchedulesRequestBuilderGetQueryParameters(
+            filter=f"principalId eq '{escaped}'",
+        )
+    )
+    group = client.identity_governance.privileged_access.group
+    active = await _page_pim_schedules(group.assignment_schedules, active_config)
+    eligible = await _page_pim_schedules(group.eligibility_schedules, eligible_config)
+    return [
+        s for s in active if isinstance(s, PrivilegedAccessGroupAssignmentSchedule)
+    ], [s for s in eligible if isinstance(s, PrivilegedAccessGroupEligibilitySchedule)]
+
+
 async def collect_directory_roles(
     client: GraphServiceClient,
     object_id: str,
@@ -436,6 +552,13 @@ async def _collect_for_service_principal(
         )
     except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
         record["errors"].append(f"Failed to collect group memberships: {exc}")
+    try:
+        active, eligible = await collect_pim_for_groups(client, record["objectId"])
+        record["groupMemberships"] = apply_pim_membership(
+            record["groupMemberships"], active, eligible
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
+        record["errors"].append(f"Failed to collect PIM-for-Groups status: {exc}")
     try:
         record["directoryRoles"] = await collect_directory_roles(
             client, record["objectId"], record["groupMemberships"], schedule_cache
