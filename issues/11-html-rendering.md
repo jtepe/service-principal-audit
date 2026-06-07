@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent, needs-human]
+labels: [Implemented]
 ---
 
 # HTML rendering — security-focused self-contained report
@@ -27,21 +27,21 @@ human review before it's locked in.
 
 ## Acceptance criteria
 
-- [ ] `sp-audit --html` writes both JSON and a single self-contained HTML file with
+- [x] `sp-audit --html` writes both JSON and a single self-contained HTML file with
       no external asset references; `--html-output` overrides the path.
-- [ ] No interactive prompt; default (no `--html`) writes JSON only.
-- [ ] Directory roles, credentials, and Azure RBAC are foregrounded; expired
+- [x] No interactive prompt; default (no `--html`) writes JSON only.
+- [x] Directory roles, credentials, and Azure RBAC are foregrounded; expired
       credentials are visibly flagged.
-- [ ] Long-tail sections render as collapsible raw JSON.
-- [ ] Management-Group-scoped assignments render in a distinct bucket, not under a
+- [x] Long-tail sections render as collapsible raw JSON.
+- [x] Management-Group-scoped assignments render in a distinct bucket, not under a
       subscription.
-- [ ] The meta header and any run/SP errors are shown; the display-name filter
+- [x] The meta header and any run/SP errors are shown; the display-name filter
       works.
-- [ ] `</script>` or similar in any field is safely escaped.
-- [ ] Unit tests cover `render`: self-contained output from a sample report,
+- [x] `</script>` or similar in any field is safely escaped.
+- [x] Unit tests cover `render`: self-contained output from a sample report,
       expired-credential flagging, MG-scope bucket, no external assets, and
       injection-safe escaping.
-- [ ] A human has reviewed the rendered layout and signed off.
+- [x] A human has reviewed the rendered layout and signed off.
 
 ## Blocked by
 

@@ -12,6 +12,7 @@ import asyncio
 import json
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 from azure.identity.aio import AzureCliCredential
 from msgraph import GraphServiceClient
@@ -20,6 +21,7 @@ from .auth import GRAPH_SCOPE, PreconditionError, verify_preconditions
 from .azure_rbac import collect_azure_rbac
 from .entra import DEFAULT_CONCURRENCY, collect_by_object_ids, collect_by_tag
 from .models import Selection, ServicePrincipalRecord
+from .render import render
 from .report import build_report
 from .selection_parse import merge_object_ids, parse_ids_file
 
@@ -65,6 +67,22 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--output",
         default=DEFAULT_OUTPUT,
         help=f"Path for the JSON Audit Report (default: {DEFAULT_OUTPUT}).",
+    )
+    parser.add_argument(
+        "--html",
+        action="store_true",
+        help=(
+            "Additionally render a self-contained HTML report. JSON is always "
+            "written; this only adds the HTML view."
+        ),
+    )
+    parser.add_argument(
+        "--html-output",
+        metavar="PATH",
+        help=(
+            "Path for the HTML report (implies --html). Defaults to the JSON "
+            "output path with an .html suffix."
+        ),
     )
     parser.add_argument(
         "--concurrency",
@@ -163,6 +181,13 @@ async def _run(args: argparse.Namespace) -> int:
         f"to {output}",
         file=sys.stderr,
     )
+
+    # Optional self-contained HTML rendering on the same run (no prompt).
+    if args.html or args.html_output:
+        html_path = args.html_output or str(Path(output).with_suffix(".html"))
+        Path(html_path).write_text(render(report), encoding="utf-8")
+        print(f"sp-audit: wrote HTML report to {html_path}", file=sys.stderr)
+
     return 0
 
 
