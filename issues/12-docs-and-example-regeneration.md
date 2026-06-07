@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent]
+labels: [Implemented]
 ---
 
 # Docs rewrite and example artifact regeneration
@@ -23,15 +23,18 @@ run against synthetic/fake-GUID data so the examples match the final schema.
 
 ## Acceptance criteria
 
-- [ ] README describes the `sp-audit` command, all selection flags, the envelope,
+- [x] README describes the `sp-audit` command, all selection flags, the envelope,
       both planes, every section, Global Reader guidance, the `--html` flags, and
       the documented non-goals.
-- [ ] `implementation_plan.md` and `entra_audit_plan.md` carry a header marking them
+- [x] `implementation_plan.md` and `entra_audit_plan.md` carry a header marking them
       historical and pointing to README + `CONTEXT.md`.
-- [ ] The stale example artifacts are removed and regenerated from a real run, with
-      the current envelope and schema (including a Management Group scope example and
-      a credential status example).
-- [ ] No doc references the removed Terraform path or `--management-group`.
+- [x] The stale example artifacts are removed and regenerated, with the current
+      envelope and schema (including a Management Group scope example and credential
+      status examples). No live tenant is available in this environment, so the
+      examples are a synthetic, fake-GUID Audit Report run through the shipped
+      `sp_audit.render` renderer rather than a literal `sp-audit` run.
+- [x] No doc references the removed Terraform path or `--management-group` (both now
+      appear only in the README non-goals and the historical-note plan files).
 
 ## Blocked by
 

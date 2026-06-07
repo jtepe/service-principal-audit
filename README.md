@@ -1,129 +1,183 @@
-# Azure RBAC Auditor for Service Principals
+# Service Principal Audit
 
-This script queries current Azure RBAC role assignments across all subscriptions (or a specific Management Group) for a set of service principals.
+A read-only CLI that, for a selected set of Entra **Service Principals**, gathers
+everything the directory (Entra) and Azure RBAC planes know about them and writes
+it to a single JSON **Audit Report**, optionally rendered to a self-contained HTML
+view.
 
-It is designed to run locally using your active Azure CLI credentials (`az login`), inheriting your permissions directly. It does not require a dedicated service principal or managed identity to run.
+The tool runs locally as the user who ran `az login`, inheriting that user's
+permissions. It needs no dedicated service principal or managed identity, and it
+never writes to the tenant. Domain terms used throughout (Service Principal,
+Application, Directory Role, Azure Role Assignment, Plane, Credential, Owner,
+Audit Report, Run Error, SP Gap, Via-group attribution) are defined in
+[`CONTEXT.md`](CONTEXT.md).
 
 ## Prerequisites
 
-1. **Azure CLI Installed**: Install the Azure CLI (`az`) and ensure it's in your PATH.
-2. **Log In**: Run `az login` to log in with your credentials.
-3. **Permissions**:
-   - **Azure RM Scope**: You must have read permissions (like `Reader`, `Security Reader`, or equivalent) at the **Management Group** level containing the subscriptions you wish to search.
-   - **Entra ID Scope** (Only needed when querying by Tag): You must have a role like **Global Reader** or **Directory Readers** in your Entra ID tenant to read service principal tags.
+1. **Azure CLI** — install `az` and ensure it is on your `PATH`.
+2. **Log in** — run `az login`. The audit runs as the signed-in user.
+3. **Permissions** — see [Required permissions](#required-permissions) below.
+   In short: **Global Reader** in Entra plus a **Reader** role over the
+   management group hierarchy you want covered.
+
+The project is managed with [uv](https://docs.astral.sh/uv/). Installing it
+exposes the `sp-audit` console command:
+
+```bash
+uv sync
+uv run sp-audit --help
+```
 
 ## Usage
 
-The script is located in `audit_rbac.py`. Run it with `--help` to view all parameters:
+`sp-audit` always writes a JSON Audit Report. You choose the set of Service
+Principals to audit with exactly one selection method.
+
+### Select by object id
+
+Pass one or more Service Principal `objectId`s (an `appId` is accepted as a
+fallback and resolved to its Service Principal). The flag repeats:
 
 ```bash
-uv run audit_rbac.py --help
+uv run sp-audit \
+  --object-id 22222222-2222-2222-2222-222222222222 \
+  --object-id 99999999-9999-9999-9999-999999999999 \
+  --output audit-report.json
 ```
 
-### Option A: Querying Service Principals from a Terraform State File
+### Select from an ids file
 
-If you have a local `.tfstate` JSON file (or retrieve it via `terraform state pull > state.json`), the script will parse it to find all service principal resource definitions and extract their Object IDs, client IDs, and names:
+Point `--ids-file` at a file of object ids — either a newline-separated list or
+a JSON array. Values are merged and de-duplicated with any `--object-id` flags:
 
 ```bash
-uv run audit_rbac.py --state-file path/to/terraform.tfstate --output audit-results.json
+uv run sp-audit --ids-file ./sp-ids.txt --output audit-report.json
 ```
 
-### Option B: Querying Service Principals by Entra ID Tag
+### Select by tag
 
-If you cannot access the state file directly, but the service principals are tagged in Entra ID (e.g. with tag `"terraform-iac"`), you can query them dynamically:
+Audit every Service Principal carrying a given Entra tag. This is mutually
+exclusive with `--object-id` / `--ids-file`:
 
 ```bash
-uv run audit_rbac.py --tag terraform-iac --output audit-results.json
+uv run sp-audit --tag terraform-iac --output audit-report.json
 ```
 
-### Option C: Specifying Service Principals Directly
+### Rendering HTML
 
-To skip both the Terraform state and the Entra tag lookup, pass the service principal Object IDs (or Application/Client IDs) directly with `--service-principal`. The flag can be repeated to audit multiple principals in one run:
+Add `--html` to additionally render a single self-contained HTML file (data, CSS
+and JS embedded — no external assets), suitable for sharing as one file. JSON is
+always written; `--html` only adds the HTML view. `--html-output` overrides the
+path (and implies `--html`); by default the HTML path is the JSON path with an
+`.html` suffix.
 
 ```bash
-uv run audit_rbac.py \
-  --service-principal 22222222-2222-2222-2222-222222222222 \
-  --service-principal 33333333-3333-3333-3333-333333333333 \
-  --output audit-results.json
+uv run sp-audit --tag terraform-iac --html
+# writes audit-report.json and audit-report.html
+
+uv run sp-audit --tag terraform-iac --html-output report.html
 ```
 
-The script will attempt to enrich each entry with its display name and Application ID via Microsoft Graph. If the lookup fails (e.g. you do not have Entra read permission), the identifier is used as-is as an Object ID and the audit still runs.
+The HTML view is **security-focused**: it foregrounds Directory Roles,
+Credentials (flagging `expired`, with raw dates kept so "expiring soon" is a
+consumer-side judgment) and Azure Role Assignments, while showing group
+memberships, API permissions, owners and raw identity as collapsible JSON.
+Management-Group-scoped assignments get their own bucket rather than being folded
+under a subscription. A sticky search box filters Service Principals by display
+name (space-separated tokens matched in order; press `/` to focus, `Esc` to
+clear).
 
-### Optional: Scope to a Specific Management Group
+### Other flags
 
-If you have access to multiple Management Groups or want to limit the search scope to a specific Management Group hierarchy, use the `--management-group` flag:
+- `--output PATH` — path for the JSON Audit Report (default `audit-report.json`).
+- `--concurrency N` — maximum Service Principals processed at once (default 8).
+  Lower it if a throttling-prone tenant starts returning HTTP 429s.
 
-```bash
-uv run audit_rbac.py --tag terraform-iac --management-group "mg-production"
-```
+## The Audit Report
 
-## Output Structure
-
-The script outputs a JSON document sorted by Service Principal display name. Each entry represents a service principal and contains a list of its assigned role assignments at any scope:
+The output is a single JSON **object** (an envelope) — not a bare array:
 
 ```json
-[
-  {
-    "displayName": "app-frontend-sp",
-    "applicationId": "11111111-1111-1111-1111-111111111111",
-    "objectId": "22222222-2222-2222-2222-222222222222",
-    "roleAssignmentsCount": 2,
-    "roleAssignments": [
-      {
-        "subscriptionName": "Production Sub 1",
-        "subscriptionId": "33333333-3333-3333-3333-333333333333",
-        "scopeType": "Subscription",
-        "scope": "/subscriptions/33333333-3333-3333-3333-333333333333",
-        "roleName": "Reader"
-      },
-      {
-        "subscriptionName": "Production Sub 2",
-        "subscriptionId": "44444444-4444-4444-4444-444444444444",
-        "scopeType": "Resource Group",
-        "scope": "/subscriptions/44444444-4444-4444-4444-444444444444/resourceGroups/app-rg",
-        "roleName": "Contributor"
-      }
-    ]
-  }
-]
+{
+  "meta": { "...": "run-scoped metadata, including runErrors" },
+  "servicePrincipals": [ { "...": "one entry per audited SP" } ]
+}
 ```
 
-## Rendering the Report as HTML
+`meta` carries the run context — `generatedAt`, `tenantId`, the `selection`
+(resolved `objectIds`, plus `tag` when selected that way), `toolVersion`, and
+`runErrors`. Each entry in `servicePrincipals` (sorted by display name) reports
+**both planes** in separately-named fields:
 
-The companion script `render_html.py` converts the JSON report produced by `audit_rbac.py` into a single self-contained HTML file. It embeds the report data plus its own CSS and JavaScript, so the output can be opened directly in a browser or shared as a single file (e.g. as an email attachment or a Gist) without any external assets.
+| Field | Plane | What it holds |
+| --- | --- | --- |
+| `objectId`, `appId`, `displayName`, `tags`, `application` | directory | Identity of the SP and its nullable attached Application (`null` for managed identities, multi-tenant and gallery apps). |
+| `directoryRoles` | directory | Directory Roles from all four paths: `assignmentType` (`active`/`eligible`) × direct or via a role-assignable group. `source` is `"direct"` or the group's display name, with `sourceGroupId`. |
+| `groupMemberships` | directory | Direct and transitive group memberships, with `isAssignableToRole` and PIM-for-Groups status (`pimMembership`). |
+| `credentials` | directory | Secrets and certificates flattened across both the SP and its Application, each with a derived `status` (`active`/`expired`/`not-yet-valid`) and the raw dates. |
+| `applicationPermissions`, `delegatedPermissions` | directory | API permissions: application (`appRoleAssignment`) and delegated (`oauth2PermissionGrant`). |
+| `owners` | directory | Principals that can modify the identity (and mint Credentials), flattened across SP and Application, tagged with `owner` and `ownerType`. |
+| `azureRoleAssignments` | Azure RBAC | Role assignments at management group, subscription, resource group or resource scope. MG-scoped entries carry `managementGroupId` (with `subscription*` null). |
+| `errors` | — | Per-SP gaps (SP Gaps): a section that failed for this SP (e.g. a 403 on a PIM call, a missing Application). |
 
-### Prerequisites
+### Two-tier failure model
 
-- Python 3.10 or newer. No third-party packages are required; the script only uses the standard library.
-- A JSON report previously produced by `audit_rbac.py` (see above).
+The run distinguishes two kinds of failure (see
+[`docs/adr/0002-report-envelope-and-failure-tiers.md`](docs/adr/0002-report-envelope-and-failure-tiers.md)):
 
-### Usage
+- **Run Errors** — plane-wide or precondition failures (e.g. the Azure RBAC batch
+  query failed) recorded in top-level `meta.runErrors`. The rest of the report
+  still writes.
+- **SP Gaps** — a per-SP, per-section failure recorded in that SP's `errors[]`.
+  The run still completes and **exits 0**; gaps are data, not run failures.
+
+A failed precondition (not logged in, no Graph token) is the one case that aborts
+before collection with a non-zero exit.
+
+See [`example-audit.json`](example-audit.json) for a full report on synthetic
+data — including a Management-Group-scoped assignment, all three credential
+statuses, an active and an eligible Directory Role, a managed identity (`null`
+Application) with SP Gaps, and a `runErrors` entry — and
+[`example-audit.html`](example-audit.html) for the rendered view.
+
+## Required permissions
+
+The tool inherits the signed-in user's roles across both planes:
+
+- **Directory plane (Entra).** **Global Reader** is recommended — it covers
+  directory reads plus the role-management and PIM reads the audit needs.
+  **Directory Readers** alone is not enough: it cannot read the directory-role
+  schedule or the PIM-for-Groups endpoints, so those sections degrade to SP Gaps
+  in each affected SP's `errors[]` (the run still completes and exits 0).
+- **Azure RBAC plane (ARM).** A **Reader** (or equivalent) role over the
+  management group hierarchy you want covered, so the Azure Resource Graph query
+  can resolve assignments at every scope.
+
+## Non-goals
+
+The following are explicitly out of scope for this tool:
+
+- **Sign-in / usage activity** — no dormant-SP detection from sign-in or
+  last-credential-usage signals.
+- **Effective-privilege computation** — the report keeps raw, cross-referenceable
+  facts; there is no derived `effective`/`effectiveReason` field.
+- **Terraform state input** — there is no `--state-file` / state parsing; selection
+  is by object id, ids file, or tag only.
+- **`--management-group` scoping** — the Azure RBAC query always covers the full
+  management group hierarchy; there is no scoping flag.
+- **`--expiring-within` threshold flag** — raw credential dates are retained so
+  "expiring soon" stays a consumer-side judgment.
+
+## Development
 
 ```bash
-uv run render_html.py audit-results.json --output audit-results.html
+uv run pytest        # tests
+uv run ruff check .  # lint
+uv run ruff format . # format
+uv run ty check      # type-check
 ```
 
-Optional flags:
-
-- `--output / -o`: Path for the generated HTML file (default: `audit-results.html`).
-- `--title`: Override the `<title>` tag of the generated document.
-
-### What the HTML Contains
-
-For each service principal the page renders one section, with alternating background colors between adjacent sections. Each section is split into three parts:
-
-1. **Service principal header** with the display name, the Client (Application) ID, and the Object ID.
-2. **One block per subscription** in which the principal has role assignments, showing the subscription name and ID.
-3. **A list of permissions** within that subscription, each entry showing the role name, the scope type (Subscription / Resource Group / Resource), and the full scope string.
-
-A sticky search input at the top of the page filters the visible service principals by display name. The match is case-insensitive: each whitespace-separated token in the query must appear as a substring of the name, in the order given. For example, `data` matches `sp-Data-pipeline` but not `sp-ata-infra`, and `sp app-` matches `sp-terraform-app-gateway`. Press `/` from anywhere on the page to focus the input, and `Esc` to clear it.
-
-## How It Works Under the Hood
-
-1. **Service Principal Extraction**: 
-   - Under `--state-file`, the script parses the state JSON for `"type": "azuread_service_principal"`.
-   - Under `--tag`, the script makes a GET request to the Microsoft Graph API `https://graph.microsoft.com/v1.0/servicePrincipals` using `az rest`, handling OData pagination dynamically.
-   - Under `--service-principal`, the script uses the supplied IDs directly and performs a best-effort Graph lookup per ID to resolve display name and Application ID.
-2. **Batching**: Since query length has size limits, the script chunks the ~500 service principal Object IDs into blocks of 100 and issues separate Azure Resource Graph queries. Each chunk is paginated via `--skip-token` (page size 1000) so result sets larger than a single page are retrieved completely.
-3. **Azure Resource Graph (ARG) Querying**: Runs a fast, tenant-wide Kusto query using the `authorizationresources` and `resourcecontainers` tables to resolve assignments at all scopes (Subscription, Resource Group, and Resource level), along with friendly Role names and Subscription names.
-4. **Aggregation**: The script builds a unified view and outputs it as JSON.
+Design history lives in [`implementation_plan.md`](implementation_plan.md) and
+[`entra_audit_plan.md`](entra_audit_plan.md) (historical notes — the current
+sources of truth are this README and [`CONTEXT.md`](CONTEXT.md)). Architectural
+decisions are in [`docs/adr/`](docs/adr).

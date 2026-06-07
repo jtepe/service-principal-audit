@@ -1,3 +1,9 @@
+> **Historical design note.** This document captures early design thinking and no
+> longer describes the shipped tool (it predates the `{ meta, servicePrincipals }`
+> envelope, the two-plane model, and the removal of Terraform/`--management-group`).
+> For the current source of truth see [`README.md`](README.md) and
+> [`CONTEXT.md`](CONTEXT.md). Kept for historical context only.
+
 # Azure RBAC Permission Auditing Plan for Terraform-Managed Service Principals
 
 This document presents a technical proposal and plan for auditing Azure RBAC permissions assigned to approximately 500 service principals across 160 subscriptions under a single Management Group.

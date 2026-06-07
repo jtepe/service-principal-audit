@@ -1,3 +1,8 @@
+> **Historical design note.** This document captures early design thinking and may
+> diverge from the shipped tool. For the current source of truth see
+> [`README.md`](README.md) and [`CONTEXT.md`](CONTEXT.md). Kept for historical
+> context only.
+
 # Entra Service Principal Audit Plan
 
 This document presents a technical proposal for auditing **Microsoft Entra ID
