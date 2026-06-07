@@ -18,6 +18,9 @@ from msgraph import GraphServiceClient
 from msgraph.generated.applications.applications_request_builder import (
     ApplicationsRequestBuilder,
 )
+from msgraph.generated.applications.item.owners.owners_request_builder import (
+    OwnersRequestBuilder as ApplicationOwnersRequestBuilder,
+)
 from msgraph.generated.groups.item.group_item_request_builder import (
     GroupItemRequestBuilder,
 )
@@ -29,6 +32,7 @@ from msgraph.generated.identity_governance.privileged_access.group.eligibility_s
 )
 from msgraph.generated.models.app_role_assignment import AppRoleAssignment
 from msgraph.generated.models.application import Application
+from msgraph.generated.models.directory_object import DirectoryObject
 from msgraph.generated.models.group import Group
 from msgraph.generated.models.o_auth2_permission_grant import OAuth2PermissionGrant
 from msgraph.generated.models.privileged_access_group_assignment_schedule import (
@@ -47,6 +51,7 @@ from msgraph.generated.models.unified_role_assignment_schedule import (
 from msgraph.generated.models.unified_role_eligibility_schedule import (
     UnifiedRoleEligibilitySchedule,
 )
+from msgraph.generated.models.user import User
 from msgraph.generated.role_management.directory.role_assignment_schedules.role_assignment_schedules_request_builder import (  # noqa: E501
     RoleAssignmentSchedulesRequestBuilder,
 )
@@ -55,6 +60,9 @@ from msgraph.generated.role_management.directory.role_eligibility_schedules.role
 )
 from msgraph.generated.service_principals.item.member_of.member_of_request_builder import (  # noqa: E501
     MemberOfRequestBuilder,
+)
+from msgraph.generated.service_principals.item.owners.owners_request_builder import (
+    OwnersRequestBuilder as ServicePrincipalOwnersRequestBuilder,
 )
 from msgraph.generated.service_principals.item.service_principal_item_request_builder import (  # noqa: E501
     ServicePrincipalItemRequestBuilder,
@@ -73,6 +81,7 @@ from .models import (
     DelegatedPermissionRecord,
     DirectoryRoleRecord,
     GroupMembershipRecord,
+    OwnerRecord,
     ServicePrincipalRecord,
 )
 from .single_flight import SingleFlight
@@ -106,6 +115,7 @@ APP_SELECT = [
 ]
 GROUP_SELECT = ["id", "displayName", "isAssignableToRole"]
 RESOURCE_SELECT = ["id", "displayName", "appId", "appRoles"]
+OWNER_SELECT = ["id", "displayName"]
 
 # Both directory-role schedule kinds share the same readable shape
 # (`roleDefinition`, `directoryScopeId`, `scheduleInfo`); `scheduleInfo` lives on
@@ -151,6 +161,7 @@ def sp_record_from_graph(
         "credentials": [],
         "applicationPermissions": [],
         "delegatedPermissions": [],
+        "owners": [],
         "errors": [],
     }
 
@@ -322,6 +333,41 @@ def delegated_permission_from_graph(
         "scopes": grant.scope.split() if grant.scope else [],
         "consentType": grant.consent_type,
         "principalId": grant.principal_id,
+    }
+
+
+def _owner_type(
+    owner: DirectoryObject,
+) -> Literal["user", "servicePrincipal", "group"] | None:
+    """Classify an owner by its concrete DirectoryObject subtype.
+
+    Pure: no network. An unrecognized directory object kind degrades to `None`
+    rather than guessing.
+    """
+    if isinstance(owner, User):
+        return "user"
+    if isinstance(owner, ServicePrincipal):
+        return "servicePrincipal"
+    if isinstance(owner, Group):
+        return "group"
+    return None
+
+
+def owner_from_graph(
+    owner: DirectoryObject, owned: Literal["application", "servicePrincipal"]
+) -> OwnerRecord:
+    """Map a Graph owner DirectoryObject onto an owner record.
+
+    Pure: no network. `owned` is supplied by the caller — which object's owners
+    are being read — mirroring the credential discriminator. `ownerType` is taken
+    from the concrete subtype so an SP-owns-SP privilege chain stays visible, not
+    hidden among human owners.
+    """
+    return {
+        "owner": owned,
+        "ownerType": _owner_type(owner),
+        "id": owner.id,
+        "displayName": getattr(owner, "display_name", None),
     }
 
 
@@ -674,6 +720,44 @@ async def collect_api_permissions(
     return application_permissions, delegated_permissions
 
 
+async def collect_owners(
+    client: GraphServiceClient,
+    object_id: str,
+    app_object_id: str | None,
+) -> list[OwnerRecord]:
+    """Collect Owners of the SP and (when present) its Application, flattened.
+
+    Pages `/servicePrincipals/{id}/owners` and, only when the SP has an
+    Application object, `/applications/{id}/owners`, each with `$select=id,
+    displayName`. Every entry is tagged with which object it owns; `ownerType` is
+    derived from the owner's directory subtype so a non-human owner is visible.
+    """
+    sp_config = RequestConfiguration(
+        query_parameters=ServicePrincipalOwnersRequestBuilder.OwnersRequestBuilderGetQueryParameters(
+            select=OWNER_SELECT,
+        )
+    )
+    sp_item = client.service_principals.by_service_principal_id(object_id)
+    owners = [
+        owner_from_graph(obj, "servicePrincipal")
+        for obj in await _page_all(sp_item.owners, sp_config)
+        if isinstance(obj, DirectoryObject)
+    ]
+    if app_object_id is not None:
+        app_config = RequestConfiguration(
+            query_parameters=ApplicationOwnersRequestBuilder.OwnersRequestBuilderGetQueryParameters(
+                select=OWNER_SELECT,
+            )
+        )
+        app_item = client.applications.by_application_id(app_object_id)
+        owners.extend(
+            owner_from_graph(obj, "application")
+            for obj in await _page_all(app_item.owners, app_config)
+            if isinstance(obj, DirectoryObject)
+        )
+    return owners
+
+
 async def _collect_for_service_principal(
     client: GraphServiceClient,
     sp: ServicePrincipal,
@@ -740,6 +824,14 @@ async def _collect_for_service_principal(
         record["delegatedPermissions"] = delegated_permissions
     except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
         record["errors"].append(f"Failed to collect API permissions: {exc}")
+    try:
+        application = record["application"]
+        app_object_id = application["objectId"] if application is not None else None
+        record["owners"] = await collect_owners(
+            client, record["objectId"], app_object_id
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
+        record["errors"].append(f"Failed to collect owners: {exc}")
     return record
 
 

@@ -129,6 +129,23 @@ class DelegatedPermissionRecord(TypedDict):
     principalId: str | None
 
 
+class OwnerRecord(TypedDict):
+    """A principal that can modify the audited identity (and mint Credentials).
+
+    Carried in `ServicePrincipalRecord.owners`, flattened from the owners of both
+    the Service Principal and its Application. `owner` records which object is
+    owned (`application`/`servicePrincipal`), mirroring the credential
+    discriminator; `ownerType` is the owning principal's kind
+    (`user`/`servicePrincipal`/`group`) so an SP-owns-SP privilege chain stays
+    visible rather than hidden among human owners.
+    """
+
+    owner: Literal["application", "servicePrincipal"]
+    ownerType: Literal["user", "servicePrincipal", "group"] | None
+    id: str | None
+    displayName: str | None
+
+
 class ServicePrincipalRecord(TypedDict):
     """A single audited Service Principal: identity, tags, attached Application."""
 
@@ -143,6 +160,7 @@ class ServicePrincipalRecord(TypedDict):
     credentials: list[CredentialRecord]
     applicationPermissions: list[ApplicationPermissionRecord]
     delegatedPermissions: list[DelegatedPermissionRecord]
+    owners: list[OwnerRecord]
     errors: list[str]
 
 
