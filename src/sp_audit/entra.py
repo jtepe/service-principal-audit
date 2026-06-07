@@ -9,6 +9,7 @@ unit-tested without a live Graph client.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -88,6 +89,10 @@ from .single_flight import SingleFlight
 
 # The all-zero appRole GUID is Graph's "default access" marker, not a named role.
 DEFAULT_ACCESS_APP_ROLE = "00000000-0000-0000-0000-000000000000"
+
+# Conservative default fan-out across SPs; dialed down via --concurrency when a
+# throttling-prone tenant starts returning 429s.
+DEFAULT_CONCURRENCY = 5
 
 # Resource SPs are fetched once per resourceId and reused across every SP and
 # both permission planes; the cached value is the resource's display name plus
@@ -768,110 +773,132 @@ async def _collect_for_service_principal(
 
     Every section degrades to an SP Gap in the record's `errors[]` rather than
     aborting the whole SP (ADR-0002 two-tier failures), so this never raises: the
-    base record is mapped first from the already-resolved SP, then the Application
-    and each collected section are attached independently. Directory-role
-    attribution depends on the collected memberships, so it runs after them.
+    base record is mapped first from the already-resolved SP, then the
+    independent sections are gathered concurrently. The three chains carry the
+    only intra-SP ordering: owners follows Application resolution (it needs the
+    Application object id), and directory-role attribution follows memberships.
     """
     record = sp_record_from_graph(sp, None)
     now = datetime.now(UTC)
     record["credentials"] = map_credentials(
         "servicePrincipal", sp.password_credentials, sp.key_credentials, now
     )
-    if sp.app_id:
-        try:
-            application = await _resolve_application(client, sp.app_id)
-        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
-            record["errors"].append(f"Failed to resolve application: {exc}")
-        else:
-            if application is not None:
-                record["application"] = application_record_from_graph(application)
-                record["credentials"].extend(
-                    map_credentials(
-                        "application",
-                        application.password_credentials,
-                        application.key_credentials,
-                        now,
-                    )
-                )
+
+    async def application_and_owners() -> None:
+        app_object_id: str | None = None
+        if sp.app_id:
+            try:
+                application = await _resolve_application(client, sp.app_id)
+            except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+                record["errors"].append(f"Failed to resolve application: {exc}")
             else:
-                record["errors"].append(
-                    f"No Application object found for appId '{sp.app_id}' (SP Gap)"
-                )
-    try:
-        record["groupMemberships"] = await collect_group_memberships(
-            client, record["objectId"]
-        )
-    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
-        record["errors"].append(f"Failed to collect group memberships: {exc}")
-    try:
-        active, eligible = await collect_pim_for_groups(client, record["objectId"])
-        record["groupMemberships"] = apply_pim_membership(
-            record["groupMemberships"], active, eligible
-        )
-    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
-        record["errors"].append(f"Failed to collect PIM-for-Groups status: {exc}")
-    try:
-        record["directoryRoles"] = await collect_directory_roles(
-            client, record["objectId"], record["groupMemberships"], schedule_cache
-        )
-    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
-        record["errors"].append(f"Failed to collect directory roles: {exc}")
-    try:
-        application_permissions, delegated_permissions = await collect_api_permissions(
-            client, record["objectId"], resource_cache
-        )
-        record["applicationPermissions"] = application_permissions
-        record["delegatedPermissions"] = delegated_permissions
-    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
-        record["errors"].append(f"Failed to collect API permissions: {exc}")
-    try:
-        application = record["application"]
-        app_object_id = application["objectId"] if application is not None else None
-        record["owners"] = await collect_owners(
-            client, record["objectId"], app_object_id
-        )
-    except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap, never abort
-        record["errors"].append(f"Failed to collect owners: {exc}")
+                if application is not None:
+                    record["application"] = application_record_from_graph(application)
+                    app_object_id = application.id
+                    record["credentials"].extend(
+                        map_credentials(
+                            "application",
+                            application.password_credentials,
+                            application.key_credentials,
+                            now,
+                        )
+                    )
+                else:
+                    record["errors"].append(
+                        f"No Application object found for appId '{sp.app_id}' (SP Gap)"
+                    )
+        try:
+            record["owners"] = await collect_owners(
+                client, record["objectId"], app_object_id
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+            record["errors"].append(f"Failed to collect owners: {exc}")
+
+    async def memberships_and_roles() -> None:
+        try:
+            record["groupMemberships"] = await collect_group_memberships(
+                client, record["objectId"]
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+            record["errors"].append(f"Failed to collect group memberships: {exc}")
+        try:
+            active, eligible = await collect_pim_for_groups(client, record["objectId"])
+            record["groupMemberships"] = apply_pim_membership(
+                record["groupMemberships"], active, eligible
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+            record["errors"].append(f"Failed to collect PIM-for-Groups status: {exc}")
+        try:
+            record["directoryRoles"] = await collect_directory_roles(
+                client, record["objectId"], record["groupMemberships"], schedule_cache
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+            record["errors"].append(f"Failed to collect directory roles: {exc}")
+
+    async def api_permissions() -> None:
+        try:
+            app_perms, delegated_perms = await collect_api_permissions(
+                client, record["objectId"], resource_cache
+            )
+            record["applicationPermissions"] = app_perms
+            record["delegatedPermissions"] = delegated_perms
+        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+            record["errors"].append(f"Failed to collect API permissions: {exc}")
+
+    await asyncio.gather(
+        application_and_owners(), memberships_and_roles(), api_permissions()
+    )
     return record
 
 
 async def _collect_all(
-    client: GraphServiceClient, service_principals: list[ServicePrincipal]
+    client: GraphServiceClient,
+    service_principals: list[ServicePrincipal],
+    concurrency: int = DEFAULT_CONCURRENCY,
 ) -> tuple[list[ServicePrincipalRecord], list[str]]:
     """Collect a list of already-resolved SPs into records, isolating failures.
 
     Shared by both selection paths so a per-SP failure never aborts the batch.
-    One `schedule_cache` and one `resource_cache` are shared across the whole
+    SPs are processed concurrently under a single `asyncio.Semaphore` bound
+    (`concurrency`) so a large fleet completes without flooding the tenant. One
+    `schedule_cache` and one `resource_cache` are shared across the whole
     selection so a group's directory-role schedules and a resource SP's
-    appRoles/display name are each fetched once for the run, regardless of how
-    many SPs reach them. Per-SP sections already degrade to SP Gaps; an unexpected
-    collection failure here degrades to a Run Error rather than dropping every
-    other SP.
+    appRoles/display name are each fetched once for the run — single-flight keeps
+    them from stampeding under concurrency. Per-SP sections already degrade to SP
+    Gaps; an unexpected collection failure here degrades to a Run Error rather
+    than dropping every other SP.
     """
     schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
     resource_cache: SingleFlight[str, ResourceInfo] = SingleFlight()
-    records: list[ServicePrincipalRecord] = []
+    semaphore = asyncio.Semaphore(concurrency)
     run_errors: list[str] = []
-    for sp in service_principals:
-        try:
-            records.append(
-                await _collect_for_service_principal(
+
+    async def collect_one(sp: ServicePrincipal) -> ServicePrincipalRecord | None:
+        async with semaphore:
+            try:
+                return await _collect_for_service_principal(
                     client, sp, schedule_cache, resource_cache
                 )
-            )
-        except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
-            run_errors.append(f"Failed to collect '{sp.id}': {exc}")
+            except Exception as exc:  # noqa: BLE001 - degrade to a Run Error
+                run_errors.append(f"Failed to collect '{sp.id}': {exc}")
+                return None
+
+    results = await asyncio.gather(*(collect_one(sp) for sp in service_principals))
+    records = [record for record in results if record is not None]
     return records, run_errors
 
 
 async def collect_by_object_ids(
-    client: GraphServiceClient, object_ids: list[str]
+    client: GraphServiceClient,
+    object_ids: list[str],
+    concurrency: int = DEFAULT_CONCURRENCY,
 ) -> tuple[list[ServicePrincipalRecord], list[str]]:
     """Collect records for an explicit set of object ids.
 
     Each id is resolved independently, so an unresolvable id degrades to a Run
     Error rather than aborting the run; the rest are then collected via the
-    shared `_collect_all` path. Returns the records plus all Run Errors.
+    shared `_collect_all` path under the `concurrency` bound. Returns the records
+    plus all Run Errors.
     """
     service_principals: list[ServicePrincipal] = []
     run_errors: list[str] = []
@@ -882,7 +909,9 @@ async def collect_by_object_ids(
             )
         except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
             run_errors.append(f"Failed to resolve '{object_id}': {exc}")
-    records, collect_errors = await _collect_all(client, service_principals)
+    records, collect_errors = await _collect_all(
+        client, service_principals, concurrency
+    )
     return records, run_errors + collect_errors
 
 
@@ -915,17 +944,17 @@ async def _select_by_tag(
 
 
 async def collect_by_tag(
-    client: GraphServiceClient, tag: str
+    client: GraphServiceClient, tag: str, concurrency: int = DEFAULT_CONCURRENCY
 ) -> tuple[list[ServicePrincipalRecord], list[str]]:
     """Collect every Service Principal carrying `tag` into records.
 
     Tag selection is a single Graph query: if it fails the whole selection is a
     Run Error. The selected SPs are then collected via the shared `_collect_all`
-    path, so one SP's failure no longer drops the rest. Returns the records plus
-    all Run Errors.
+    path under the `concurrency` bound, so one SP's failure no longer drops the
+    rest. Returns the records plus all Run Errors.
     """
     try:
         service_principals = await _select_by_tag(client, tag)
     except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
         return [], [f"Failed to select by tag '{tag}': {exc}"]
-    return await _collect_all(client, service_principals)
+    return await _collect_all(client, service_principals, concurrency)
