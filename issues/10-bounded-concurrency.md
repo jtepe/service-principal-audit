@@ -1,5 +1,5 @@
 ---
-labels: [ready-for-agent]
+labels: [Implemented]
 ---
 
 # Bounded concurrency across Service Principals
@@ -19,12 +19,12 @@ heavily-shared groups).
 
 ## Acceptance criteria
 
-- [ ] `--concurrency N` bounds the number of SPs processed at once; default is 5.
-- [ ] Independent per-SP section calls run concurrently within an SP.
-- [ ] Under concurrency, a shared lookup (e.g. the Microsoft Graph resource SP, a
+- [x] `--concurrency N` bounds the number of SPs processed at once; default is 5.
+- [x] Independent per-SP section calls run concurrently within an SP.
+- [x] Under concurrency, a shared lookup (e.g. the Microsoft Graph resource SP, a
       widely-shared group's role schedules) is still fetched once, not once per SP.
-- [ ] Backoff on 429/503 is handled via the SDK's Retry-After handler.
-- [ ] A run over many SPs completes and writes a complete report.
+- [x] Backoff on 429/503 is handled via the SDK's Retry-After handler.
+- [x] A run over many SPs completes and writes a complete report.
 
 ## Blocked by
 

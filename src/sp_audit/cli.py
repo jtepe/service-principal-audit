@@ -18,7 +18,7 @@ from msgraph import GraphServiceClient
 
 from .auth import GRAPH_SCOPE, PreconditionError, verify_preconditions
 from .azure_rbac import collect_azure_rbac
-from .entra import collect_by_object_ids, collect_by_tag
+from .entra import DEFAULT_CONCURRENCY, collect_by_object_ids, collect_by_tag
 from .models import Selection, ServicePrincipalRecord
 from .report import build_report
 from .selection_parse import merge_object_ids, parse_ids_file
@@ -66,12 +66,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=DEFAULT_OUTPUT,
         help=f"Path for the JSON Audit Report (default: {DEFAULT_OUTPUT}).",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=DEFAULT_CONCURRENCY,
+        metavar="N",
+        help=(
+            "Maximum number of service principals processed at once "
+            f"(default: {DEFAULT_CONCURRENCY}). Lower it if a throttling-prone "
+            "tenant starts returning 429s."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.tag is not None and (args.object_ids or args.ids_file):
         parser.error("--tag is mutually exclusive with --object-id/--ids-file")
     if args.tag is None and not args.object_ids and not args.ids_file:
         parser.error("one of --object-id, --ids-file, or --tag is required")
+    if args.concurrency < 1:
+        parser.error("--concurrency must be at least 1")
     return args
 
 
@@ -104,13 +117,17 @@ async def _run(args: argparse.Namespace) -> int:
         client = GraphServiceClient(credentials=credential, scopes=[GRAPH_SCOPE])
         if args.tag is not None:
             selection = {"objectIds": [], "tag": args.tag}
-            records, tag_errors = await collect_by_tag(client, args.tag)
+            records, tag_errors = await collect_by_tag(
+                client, args.tag, args.concurrency
+            )
             run_errors.extend(tag_errors)
             selection["objectIds"] = [r["objectId"] for r in records]
         else:
             object_ids = merge_object_ids(args.object_ids, file_ids)
             selection = {"objectIds": object_ids}
-            records, id_errors = await collect_by_object_ids(client, object_ids)
+            records, id_errors = await collect_by_object_ids(
+                client, object_ids, args.concurrency
+            )
             run_errors.extend(id_errors)
     finally:
         await credential.close()
