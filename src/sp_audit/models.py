@@ -99,6 +99,36 @@ class CredentialRecord(TypedDict):
     status: Literal["active", "expired", "not-yet-valid"]
 
 
+class ApplicationPermissionRecord(TypedDict):
+    """An application API permission (Graph `appRoleAssignment`) held by the SP.
+
+    Carried in `ServicePrincipalRecord.applicationPermissions`. `permission` is
+    the appRole's human-readable value (e.g. `User.Read.All`) resolved from the
+    resource SP's `appRoles`, `"default access"` for the all-zero `appRoleId`
+    GUID, or `None` when the GUID resolves to no known role.
+    """
+
+    resourceId: str | None
+    resourceDisplayName: str | None
+    appRoleId: str | None
+    permission: str | None
+
+
+class DelegatedPermissionRecord(TypedDict):
+    """A delegated API permission (Graph `oauth2PermissionGrant`) held by the SP.
+
+    Carried in `ServicePrincipalRecord.delegatedPermissions`. `scopes` is the
+    space-delimited `scope` string split into a list; `consentType` is
+    `AllPrincipals`/`Principal` and `principalId` is set only for `Principal`.
+    """
+
+    resourceId: str | None
+    resourceDisplayName: str | None
+    scopes: list[str]
+    consentType: str | None
+    principalId: str | None
+
+
 class ServicePrincipalRecord(TypedDict):
     """A single audited Service Principal: identity, tags, attached Application."""
 
@@ -111,6 +141,8 @@ class ServicePrincipalRecord(TypedDict):
     groupMemberships: list[GroupMembershipRecord]
     directoryRoles: list[DirectoryRoleRecord]
     credentials: list[CredentialRecord]
+    applicationPermissions: list[ApplicationPermissionRecord]
+    delegatedPermissions: list[DelegatedPermissionRecord]
     errors: list[str]
 
 
