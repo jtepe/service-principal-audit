@@ -150,6 +150,17 @@ The tool inherits the signed-in user's roles across both planes:
   **Directory Readers** alone is not enough: it cannot read the directory-role
   schedule or the PIM-for-Groups endpoints, so those sections degrade to SP Gaps
   in each affected SP's `errors[]` (the run still completes and exits 0).
+
+  The role-management and PIM-for-Groups endpoints additionally require the
+  matching **delegated Graph permissions** to be consented for the Azure CLI
+  application — the Entra role alone is not sufficient. Without them Graph
+  returns `403 PermissionScopeNotGranted` and those two sections degrade to SP
+  Gaps (the affected `errors[]` entry names the exact missing scopes, e.g.
+  `RoleAssignmentSchedule.Read.Directory`, `RoleManagement.Read.All`,
+  `PrivilegedAccess.Read.AzureADGroup`). A tenant admin grants them once with
+  admin consent for the Azure CLI client (app id
+  `04b07795-8ddb-461a-bbee-02f9e1bf7b46`); the run still completes and exits 0
+  in the meantime.
 - **Azure RBAC plane (ARM).** A **Reader** (or equivalent) role over the
   management group hierarchy you want covered, so the Azure Resource Graph query
   can resolve assignments at every scope.
