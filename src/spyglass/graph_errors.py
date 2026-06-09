@@ -28,7 +28,7 @@ def _parse_inner_message(message: str) -> tuple[str | None, str | None]:
     """
     try:
         data = json.loads(message)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None, None
     if not isinstance(data, dict):
         return None, None

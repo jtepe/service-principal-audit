@@ -14,10 +14,15 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from azure.identity.aio import AzureCliCredential
 from msgraph import GraphServiceClient
 
-from .auth import GRAPH_SCOPE, PreconditionError, verify_preconditions
+from .auth import (
+    GRAPH_SCOPE,
+    PreconditionError,
+    build_graph_credential,
+    resolve_graph_auth_config,
+    verify_preconditions,
+)
 from .azure_rbac import collect_azure_rbac
 from .entra import DEFAULT_CONCURRENCY, EntraCollector
 from .models import Selection, ServicePrincipalRecord
@@ -95,6 +100,43 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "tenant starts returning 429s."
         ),
     )
+    auth = parser.add_argument_group(
+        "Graph authentication",
+        "Selects the Microsoft Graph credential. Service principal (client id + "
+        "secret + tenant) takes precedence, then --managed-identity, otherwise "
+        "the 'az login' user. The Azure RBAC plane always uses 'az login'. "
+        "Each flag falls back to its AZURE_* environment variable.",
+    )
+    auth.add_argument(
+        "--client-id",
+        metavar="ID",
+        help=(
+            "Service-principal app (client) id, or the client id of a "
+            "user-assigned managed identity (env: AZURE_CLIENT_ID)."
+        ),
+    )
+    auth.add_argument(
+        "--client-secret",
+        metavar="SECRET",
+        help=(
+            "Service-principal client secret (env: AZURE_CLIENT_SECRET). "
+            "Prefer the environment variable: command-line values are visible "
+            "in process listings."
+        ),
+    )
+    auth.add_argument(
+        "--tenant-id",
+        metavar="ID",
+        help="Service-principal tenant id (env: AZURE_TENANT_ID).",
+    )
+    auth.add_argument(
+        "--managed-identity",
+        action="store_true",
+        help=(
+            "Authenticate to Graph with a managed identity (system-assigned, "
+            "or user-assigned when --client-id is given)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.tag is not None and (args.object_ids or args.ids_file):
@@ -109,9 +151,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 async def _run(args: argparse.Namespace) -> int:
     output: str = args.output
 
-    # Global precondition: fail fast with a non-zero exit before any collection.
+    # Select the Graph credential up front so a misconfiguration fails fast,
+    # before any collection. The Azure RBAC plane still uses `az login`.
     try:
-        tenant_id = await verify_preconditions()
+        auth_config = resolve_graph_auth_config(
+            client_id=args.client_id,
+            client_secret=args.client_secret,
+            tenant_id=args.tenant_id,
+            managed_identity=args.managed_identity,
+        )
+        credential = build_graph_credential(auth_config)
     except PreconditionError as exc:
         print(f"spyglass: precondition failed: {exc}", file=sys.stderr)
         return 2
@@ -123,15 +172,22 @@ async def _run(args: argparse.Namespace) -> int:
                 file_ids = parse_ids_file(fh.read())
         except (OSError, ValueError) as exc:
             print(f"spyglass: failed to read --ids-file: {exc}", file=sys.stderr)
+            await credential.close()
             return 2
 
     selection: Selection
     records: list[ServicePrincipalRecord] = []
     run_errors: list[str] = []
 
-    # Collection has started: from here we always complete, write JSON, exit 0.
-    credential = AzureCliCredential()
     try:
+        # Global precondition: fail fast (non-zero) before any collection.
+        try:
+            tenant_id = await verify_preconditions(credential)
+        except PreconditionError as exc:
+            print(f"spyglass: precondition failed: {exc}", file=sys.stderr)
+            return 2
+
+        # Collection has started: from here we always complete, write, exit 0.
         client = GraphServiceClient(credentials=credential, scopes=[GRAPH_SCOPE])
         collector = EntraCollector(client, concurrency=args.concurrency)
         if args.tag is not None:

@@ -1,25 +1,124 @@
-"""Up-front precondition gating for a run.
+"""Up-front precondition gating and Graph-plane credential selection.
 
-A single check verifies *both* that the Azure CLI has an active login
-(`az account show`) and that a live Microsoft Graph token can be acquired via
-`AzureCliCredential`. It harvests `tenantId` for `meta`. This is a global
-precondition (ADR-0002): if it fails the run aborts with a non-zero exit
-*before* any collection starts.
+The Azure RBAC plane always authenticates through `az login` (it shells out to
+`az graph query`), so an active CLI login remains a hard precondition and the
+source of `tenantId`. The Microsoft Graph plane, by contrast, picks its
+credential from the run's configuration: an explicit service principal (client
+id + secret + tenant), a managed identity, or — when neither is supplied — the
+same `az login` user (the historical default). `verify_preconditions` gates the
+run on both: a live CLI login *and* a Graph token from the selected credential.
+A failure aborts before any collection with a non-zero exit (ADR-0002).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 
-from azure.identity.aio import AzureCliCredential
+from azure.core.credentials_async import AsyncTokenCredential
+from azure.identity.aio import (
+    AzureCliCredential,
+    ClientSecretCredential,
+    ManagedIdentityCredential,
+)
 
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
 
 class PreconditionError(Exception):
     """A global precondition failed; the run must abort before collection."""
+
+
+@dataclass(frozen=True)
+class GraphAuthConfig:
+    """Resolved Graph-plane credential inputs (from CLI flags + environment).
+
+    `client_secret` present alongside `client_id`/`tenant_id` selects a service
+    principal; `managed_identity` selects a managed identity (`client_id`, if
+    set, picks a user-assigned one); neither selects the `az login` user.
+    """
+
+    client_id: str | None = None
+    client_secret: str | None = None
+    tenant_id: str | None = None
+    managed_identity: bool = False
+
+
+def _env(name: str) -> str | None:
+    """Return a non-empty environment variable, or None."""
+    value = os.environ.get(name)
+    return value or None
+
+
+def resolve_graph_auth_config(
+    *,
+    client_id: str | None,
+    client_secret: str | None,
+    tenant_id: str | None,
+    managed_identity: bool,
+) -> GraphAuthConfig:
+    """Merge CLI inputs with the standard `AZURE_*` env vars (CLI wins)."""
+    return GraphAuthConfig(
+        client_id=client_id or _env("AZURE_CLIENT_ID"),
+        client_secret=client_secret or _env("AZURE_CLIENT_SECRET"),
+        tenant_id=tenant_id or _env("AZURE_TENANT_ID"),
+        managed_identity=managed_identity,
+    )
+
+
+def build_graph_credential(config: GraphAuthConfig) -> AsyncTokenCredential:
+    """Select the Graph-plane credential from `config`, by precedence.
+
+    1. Service principal — a `client_secret` (with `client_id` and `tenant_id`).
+    2. Managed identity — when `managed_identity` is set (`client_id` picks a
+       user-assigned identity; otherwise system-assigned).
+    3. `az login` user — the default when nothing else is configured.
+
+    Raises:
+        PreconditionError: on a partial service-principal config, or when
+        managed identity is combined with service-principal inputs.
+    """
+    has_sp_input = any((config.client_secret, config.tenant_id))
+
+    if config.managed_identity:
+        if config.client_secret or config.tenant_id:
+            raise PreconditionError(
+                "Managed identity cannot be combined with a client secret or "
+                "tenant id. Choose one authentication mode."
+            )
+        if config.client_id:
+            return ManagedIdentityCredential(client_id=config.client_id)
+        return ManagedIdentityCredential()
+
+    if config.client_secret or has_sp_input:
+        missing = [
+            name
+            for name, value in (
+                ("client id", config.client_id),
+                ("client secret", config.client_secret),
+                ("tenant id", config.tenant_id),
+            )
+            if not value
+        ]
+        if missing:
+            raise PreconditionError(
+                "Service-principal authentication needs a client id, client "
+                f"secret, and tenant id; missing: {', '.join(missing)}. Pass "
+                "them via --client-id/--client-secret/--tenant-id or the "
+                "AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID env vars."
+            )
+        # Narrowed to str by the missing-check above.
+        assert config.client_id and config.client_secret and config.tenant_id
+        return ClientSecretCredential(
+            tenant_id=config.tenant_id,
+            client_id=config.client_id,
+            client_secret=config.client_secret,
+        )
+
+    return AzureCliCredential()
 
 
 def _az_account_tenant_id() -> str:
@@ -58,22 +157,24 @@ def _az_account_tenant_id() -> str:
     return str(tenant_id)
 
 
-async def verify_preconditions() -> str:
+async def verify_preconditions(credential: AsyncTokenCredential) -> str:
     """Gate the run on CLI login and a live Graph token; return the tenantId.
+
+    The Azure RBAC plane shells out to `az`, so an active `az login` is required
+    regardless of the Graph credential and remains the `tenantId` source. The
+    Graph token is acquired through `credential`, which may be the `az login`
+    user, a service principal, or a managed identity.
 
     Raises:
         PreconditionError: if not logged in, or a Graph token cannot be acquired.
     """
     tenant_id = _az_account_tenant_id()
 
-    credential = AzureCliCredential()
     try:
         await credential.get_token(GRAPH_SCOPE)
     except Exception as exc:  # noqa: BLE001 - any failure here is a hard gate
         raise PreconditionError(
-            f"Could not acquire a Microsoft Graph token via Azure CLI: {exc}"
+            f"Could not acquire a Microsoft Graph token: {exc}"
         ) from exc
-    finally:
-        await credential.close()
 
     return tenant_id
