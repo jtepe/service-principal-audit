@@ -83,6 +83,7 @@ from msgraph.generated.service_principals.service_principals_request_builder imp
 )
 
 from .credentials import map_credentials
+from .graph_errors import describe_graph_error
 from .models import (
     ApplicationPermissionRecord,
     ApplicationRecord,
@@ -624,7 +625,9 @@ class EntraCollector:
                 try:
                     application = await self._resolve_application(sp.app_id)
                 except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-                    record["errors"].append(f"Failed to resolve application: {exc}")
+                    record["errors"].append(
+                        f"Failed to resolve application: {describe_graph_error(exc)}"
+                    )
                 else:
                     if application is not None:
                         record["application"] = application_record_from_graph(
@@ -649,7 +652,9 @@ class EntraCollector:
                     record["objectId"], app_object_id
                 )
             except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-                record["errors"].append(f"Failed to collect owners: {exc}")
+                record["errors"].append(
+                    f"Failed to collect owners: {describe_graph_error(exc)}"
+                )
 
         async def memberships_and_roles() -> None:
             try:
@@ -657,7 +662,9 @@ class EntraCollector:
                     record["objectId"]
                 )
             except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-                record["errors"].append(f"Failed to collect group memberships: {exc}")
+                record["errors"].append(
+                    f"Failed to collect group memberships: {describe_graph_error(exc)}"
+                )
             try:
                 active, eligible = await self.collect_pim_for_groups(record["objectId"])
                 record["groupMemberships"] = apply_pim_membership(
@@ -665,14 +672,17 @@ class EntraCollector:
                 )
             except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
                 record["errors"].append(
-                    f"Failed to collect PIM-for-Groups status: {exc}"
+                    "Failed to collect PIM-for-Groups status: "
+                    f"{describe_graph_error(exc)}"
                 )
             try:
                 record["directoryRoles"] = await self.collect_directory_roles(
                     record["objectId"], record["groupMemberships"]
                 )
             except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-                record["errors"].append(f"Failed to collect directory roles: {exc}")
+                record["errors"].append(
+                    f"Failed to collect directory roles: {describe_graph_error(exc)}"
+                )
 
         async def api_permissions() -> None:
             try:
@@ -682,7 +692,9 @@ class EntraCollector:
                 record["applicationPermissions"] = app_perms
                 record["delegatedPermissions"] = delegated_perms
             except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-                record["errors"].append(f"Failed to collect API permissions: {exc}")
+                record["errors"].append(
+                    f"Failed to collect API permissions: {describe_graph_error(exc)}"
+                )
 
         await asyncio.gather(
             application_and_owners(), memberships_and_roles(), api_permissions()
