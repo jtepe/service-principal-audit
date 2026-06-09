@@ -19,7 +19,7 @@ from msgraph import GraphServiceClient
 
 from .auth import GRAPH_SCOPE, PreconditionError, verify_preconditions
 from .azure_rbac import collect_azure_rbac
-from .entra import DEFAULT_CONCURRENCY, collect_by_object_ids, collect_by_tag
+from .entra import DEFAULT_CONCURRENCY, EntraCollector
 from .models import Selection, ServicePrincipalRecord
 from .render import render
 from .report import build_report
@@ -133,19 +133,16 @@ async def _run(args: argparse.Namespace) -> int:
     credential = AzureCliCredential()
     try:
         client = GraphServiceClient(credentials=credential, scopes=[GRAPH_SCOPE])
+        collector = EntraCollector(client, concurrency=args.concurrency)
         if args.tag is not None:
             selection = {"objectIds": [], "tag": args.tag}
-            records, tag_errors = await collect_by_tag(
-                client, args.tag, args.concurrency
-            )
+            records, tag_errors = await collector.collect_by_tag(args.tag)
             run_errors.extend(tag_errors)
             selection["objectIds"] = [r["objectId"] for r in records]
         else:
             object_ids = merge_object_ids(args.object_ids, file_ids)
             selection = {"objectIds": object_ids}
-            records, id_errors = await collect_by_object_ids(
-                client, object_ids, args.concurrency
-            )
+            records, id_errors = await collector.collect_by_object_ids(object_ids)
             run_errors.extend(id_errors)
     finally:
         await credential.close()

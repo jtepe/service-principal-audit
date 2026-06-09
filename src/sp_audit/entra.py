@@ -5,6 +5,13 @@ Resolves a Service Principal strictly by object id via
 404, and attaches its related Application as a nullable object. The pure
 mapping functions (Graph model -> record) are network-free so they can be
 unit-tested without a live Graph client.
+
+The network-bound collectors live on `EntraCollector`, which owns the Graph
+client plus the run-scoped single-flight caches and the concurrency bound. One
+collector instance is one selection/run: its caches are shared across every SP
+it processes (so a group's schedules or a resource SP's appRoles are fetched
+once) and must not be reused across logically separate runs. The pure mapping
+functions stay module-level — they hold no state and are unit-tested directly.
 """
 
 from __future__ import annotations
@@ -376,60 +383,6 @@ def owner_from_graph(
     }
 
 
-async def _resolve_service_principal(
-    client: GraphServiceClient, object_id: str
-) -> ServicePrincipal:
-    """Resolve by object id; fall back to `appId eq '{id}'` only on a 404."""
-    item_config = RequestConfiguration(
-        query_parameters=ServicePrincipalItemRequestBuilder.ServicePrincipalItemRequestBuilderGetQueryParameters(
-            select=SP_SELECT,
-        )
-    )
-    try:
-        sp = await client.service_principals.by_service_principal_id(object_id).get(
-            request_configuration=item_config
-        )
-    except APIError as exc:
-        if exc.response_status_code != 404:
-            raise
-        sp = None
-
-    if sp is not None:
-        return sp
-
-    # 404 on the object-id route: try resolving the value as an appId.
-    escaped = object_id.replace("'", "''")
-    list_config = RequestConfiguration(
-        query_parameters=ServicePrincipalsRequestBuilder.ServicePrincipalsRequestBuilderGetQueryParameters(
-            filter=f"appId eq '{escaped}'",
-            select=SP_SELECT,
-        )
-    )
-    page = await client.service_principals.get(request_configuration=list_config)
-    matches = page.value if page is not None and page.value else []
-    if not matches:
-        raise LookupError(
-            f"No service principal found by object id or appId '{object_id}'."
-        )
-    return matches[0]
-
-
-async def _resolve_application(
-    client: GraphServiceClient, app_id: str
-) -> Application | None:
-    """Fetch the related Application by `appId eq`; `None` if there is none."""
-    escaped = app_id.replace("'", "''")
-    config = RequestConfiguration(
-        query_parameters=ApplicationsRequestBuilder.ApplicationsRequestBuilderGetQueryParameters(
-            filter=f"appId eq '{escaped}'",
-            select=APP_SELECT,
-        )
-    )
-    page = await client.applications.get(request_configuration=config)
-    matches = page.value if page is not None and page.value else []
-    return matches[0] if matches else None
-
-
 async def _page_all(
     builder: Any, config: RequestConfiguration | None = None
 ) -> list[Any]:
@@ -459,95 +412,6 @@ async def _page_groups(builder: Any, config: RequestConfiguration) -> list[Group
     return [obj for obj in await _page_all(builder, config) if isinstance(obj, Group)]
 
 
-async def collect_group_memberships(
-    client: GraphServiceClient, object_id: str
-) -> list[GroupMembershipRecord]:
-    """Collect a Service Principal's group memberships, labeled by how held.
-
-    Pages `memberOf` (labeled `direct`) and `transitiveMemberOf` (labeled
-    `transitive`), requesting `isAssignableToRole` so downstream via-group
-    attribution can decide which groups actually confer a directory role.
-    """
-    sp_item = client.service_principals.by_service_principal_id(object_id)
-    direct_config = RequestConfiguration(
-        query_parameters=MemberOfRequestBuilder.MemberOfRequestBuilderGetQueryParameters(
-            select=GROUP_SELECT,
-        )
-    )
-    transitive_config = RequestConfiguration(
-        query_parameters=TransitiveMemberOfRequestBuilder.TransitiveMemberOfRequestBuilderGetQueryParameters(
-            select=GROUP_SELECT,
-        )
-    )
-    memberships = [
-        group_membership_from_graph(group, "direct")
-        for group in await _page_groups(sp_item.member_of, direct_config)
-    ]
-    memberships.extend(
-        group_membership_from_graph(group, "transitive")
-        for group in await _page_groups(sp_item.transitive_member_of, transitive_config)
-    )
-    return memberships
-
-
-async def resolve_group_name(
-    client: GraphServiceClient,
-    single_flight: SingleFlight[str, str | None],
-    group_id: str,
-) -> str | None:
-    """Resolve a group's display name, fetching at most once per group id.
-
-    Backed by `single_flight`: concurrent or repeat lookups for the same group
-    share one `GET /groups/{id}` instead of refetching. This is the pattern
-    slices 5 and 8 reuse for their own per-group lookups.
-
-    The cache key is namespaced by the Graph resource path (`/groups/{id}`) so a
-    shared `single_flight` can hold other resource kinds (e.g. role definitions)
-    without bare-id collisions across namespaces.
-    """
-
-    async def fetch() -> str | None:
-        config = RequestConfiguration(
-            query_parameters=GroupItemRequestBuilder.GroupItemRequestBuilderGetQueryParameters(
-                select=["id", "displayName"],
-            )
-        )
-        group = await client.groups.by_group_id(group_id).get(
-            request_configuration=config
-        )
-        return group.display_name if group is not None else None
-
-    return await single_flight.do(f"/groups/{group_id}", fetch)
-
-
-async def _principal_schedules(
-    client: GraphServiceClient, principal_id: str
-) -> tuple[list[RoleSchedule], list[RoleSchedule]]:
-    """Fetch (active, eligible) directory-role schedules for one principal id.
-
-    The principal may be the SP itself (direct paths) or a role-assignable group
-    (via-group paths); both are filtered by `principalId` with
-    `$expand=roleDefinition` so role display names resolve in the same call.
-    """
-    escaped = principal_id.replace("'", "''")
-    active_config = RequestConfiguration(
-        query_parameters=RoleAssignmentSchedulesRequestBuilder.RoleAssignmentSchedulesRequestBuilderGetQueryParameters(
-            filter=f"principalId eq '{escaped}'",
-            expand=["roleDefinition"],
-        )
-    )
-    eligible_config = RequestConfiguration(
-        query_parameters=RoleEligibilitySchedulesRequestBuilder.RoleEligibilitySchedulesRequestBuilderGetQueryParameters(
-            filter=f"principalId eq '{escaped}'",
-            expand=["roleDefinition"],
-        )
-    )
-    directory = client.role_management.directory
-    active = await _page_all(directory.role_assignment_schedules, active_config)
-    eligible = await _page_all(directory.role_eligibility_schedules, eligible_config)
-    return active, eligible
-
-
 async def _page_pim_schedules(
     builder: Any, config: RequestConfiguration
 ) -> list[PimSchedule]:
@@ -563,398 +427,539 @@ async def _page_pim_schedules(
     return schedules
 
 
-async def collect_pim_for_groups(
-    client: GraphServiceClient, principal_id: str
-) -> tuple[
-    list[PrivilegedAccessGroupAssignmentSchedule],
-    list[PrivilegedAccessGroupEligibilitySchedule],
-]:
-    """Fetch the SP's (active, eligible) PIM-for-Groups membership schedules.
+class EntraCollector:
+    """Run-scoped collector for the directory plane.
 
-    Both endpoints return HTTP 400 without a `$filter`, so each is always issued
-    with a `principalId` filter; `groupId` and `accessId` are then read off the
-    results by `apply_pim_membership`. Returns standing-membership (assignment)
-    schedules and must-activate (eligibility) schedules separately.
-    """
-    escaped = principal_id.replace("'", "''")
-    active_config = RequestConfiguration(
-        query_parameters=AssignmentSchedulesRequestBuilder.AssignmentSchedulesRequestBuilderGetQueryParameters(
-            filter=f"principalId eq '{escaped}'",
-        )
-    )
-    eligible_config = RequestConfiguration(
-        query_parameters=EligibilitySchedulesRequestBuilder.EligibilitySchedulesRequestBuilderGetQueryParameters(
-            filter=f"principalId eq '{escaped}'",
-        )
-    )
-    group = client.identity_governance.privileged_access.group
-    active = await _page_pim_schedules(group.assignment_schedules, active_config)
-    eligible = await _page_pim_schedules(group.eligibility_schedules, eligible_config)
-    return [
-        s for s in active if isinstance(s, PrivilegedAccessGroupAssignmentSchedule)
-    ], [s for s in eligible if isinstance(s, PrivilegedAccessGroupEligibilitySchedule)]
+    Owns the Graph `client`, the two single-flight caches, and the concurrency
+    semaphore so the network collectors no longer thread them through every
+    signature. One instance is one selection/run: the caches are shared across
+    every SP processed by this instance — a group's directory-role schedules and
+    a resource SP's appRoles/display name are each fetched once, and single-flight
+    keeps them from stampeding under concurrency — so an instance must not be
+    reused across logically separate runs. The caches accept injection (for tests
+    or to deliberately share state) but default to fresh ones per instance.
 
-
-async def collect_directory_roles(
-    client: GraphServiceClient,
-    object_id: str,
-    memberships: list[GroupMembershipRecord],
-    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]],
-) -> list[DirectoryRoleRecord]:
-    """Collect Directory Roles across all four paths, with Via-group attribution.
-
-    Direct paths filter the SP's own id (`source = "direct"`). Via-group paths
-    query, for each role-assignable group the SP is a transitive member of, the
-    group's schedules and attribute every returned role to the SP with the
-    group's display name as `source` and its id as `sourceGroupId` — regardless
-    of intermediate non-role-assignable groups, since `memberships` already holds
-    the transitive closure.
-
-    A group's schedules are fetched at most once across every SP that reaches it
-    via `schedule_cache`. Its key is namespaced by the Graph resource path so the
-    cache never collides with other single-flight users (e.g. group-name lookups)
-    keyed by bare id.
-    """
-    roles: list[DirectoryRoleRecord] = []
-
-    active, eligible = await _principal_schedules(client, object_id)
-    roles.extend(
-        directory_role_from_schedule(s, "active", "direct", None) for s in active
-    )
-    roles.extend(
-        directory_role_from_schedule(s, "eligible", "direct", None) for s in eligible
-    )
-
-    seen_groups: set[str] = set()
-    for membership in memberships:
-        group_id = membership["groupId"]
-        if not membership["isAssignableToRole"] or group_id is None:
-            continue
-        if group_id in seen_groups:
-            continue
-        seen_groups.add(group_id)
-        source = membership["displayName"] or group_id
-
-        async def fetch(
-            gid: str = group_id, src: str = source
-        ) -> list[DirectoryRoleRecord]:
-            g_active, g_eligible = await _principal_schedules(client, gid)
-            return [
-                directory_role_from_schedule(s, "active", src, gid) for s in g_active
-            ] + [
-                directory_role_from_schedule(s, "eligible", src, gid)
-                for s in g_eligible
-            ]
-
-        roles.extend(
-            await schedule_cache.do(
-                f"/roleManagement/directory/schedules/{group_id}", fetch
-            )
-        )
-    return roles
-
-
-async def _resolve_resource(
-    client: GraphServiceClient,
-    resource_cache: SingleFlight[str, ResourceInfo],
-    resource_id: str,
-) -> ResourceInfo:
-    """Resolve a resource SP to its display name and `appRoleId -> value` map.
-
-    Backed by `resource_cache`, keyed by the Graph resource path: the Microsoft
-    Graph SP — targeted by most assignments — is fetched once and reused across
-    every SP and both permission planes for the whole run.
+    asyncio is cooperatively scheduled on one thread, so the instance state
+    (caches, semaphore) is safe to share across the fanned-out collectors without
+    extra locking beyond what `SingleFlight` already provides.
     """
 
-    async def fetch() -> ResourceInfo:
+    def __init__(
+        self,
+        client: GraphServiceClient,
+        *,
+        concurrency: int = DEFAULT_CONCURRENCY,
+        schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] | None = None,
+        resource_cache: SingleFlight[str, ResourceInfo] | None = None,
+        group_name_cache: SingleFlight[str, str | None] | None = None,
+    ) -> None:
+        self._client = client
+        self._semaphore = asyncio.Semaphore(concurrency)
+        self._schedule_cache = schedule_cache or SingleFlight()
+        self._resource_cache = resource_cache or SingleFlight()
+        self._group_name_cache = group_name_cache or SingleFlight()
+
+    async def collect_by_object_ids(
+        self, object_ids: list[str]
+    ) -> tuple[list[ServicePrincipalRecord], list[str]]:
+        """Collect records for an explicit set of object ids.
+
+        Each id is resolved independently, so an unresolvable id degrades to a Run
+        Error rather than aborting the run; the rest are then collected via the
+        shared `_collect_all` path under the concurrency bound. Returns the records
+        plus all Run Errors.
+        """
+        service_principals: list[ServicePrincipal] = []
+        run_errors: list[str] = []
+        for object_id in object_ids:
+            try:
+                service_principals.append(
+                    await self._resolve_service_principal(object_id)
+                )
+            except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
+                run_errors.append(f"Failed to resolve '{object_id}': {exc}")
+        records, collect_errors = await self._collect_all(service_principals)
+        return records, run_errors + collect_errors
+
+    async def collect_by_tag(
+        self, tag: str
+    ) -> tuple[list[ServicePrincipalRecord], list[str]]:
+        """Collect every Service Principal carrying `tag` into records.
+
+        Tag selection is a single Graph query: if it fails the whole selection is a
+        Run Error. The selected SPs are then collected via the shared `_collect_all`
+        path under the concurrency bound, so one SP's failure no longer drops the
+        rest. Returns the records plus all Run Errors.
+        """
+        try:
+            service_principals = await self._select_by_tag(tag)
+        except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
+            return [], [f"Failed to select by tag '{tag}': {exc}"]
+        return await self._collect_all(service_principals)
+
+    async def _select_by_tag(self, tag: str) -> list[ServicePrincipal]:
+        """Select Service Principals by tag, paging through all results.
+
+        Queries `tags/any(c:c eq '{tag}')` with OData single-quote escaping and
+        follows `@odata.nextLink` until the result set is exhausted. Requests the
+        unified `$select` so tag-selected SPs share the by-id baseline.
+        """
+        escaped = tag.replace("'", "''")
         config = RequestConfiguration(
+            query_parameters=ServicePrincipalsRequestBuilder.ServicePrincipalsRequestBuilderGetQueryParameters(
+                filter=f"tags/any(c:c eq '{escaped}')",
+                select=SP_SELECT,
+            )
+        )
+        selected: list[ServicePrincipal] = []
+        page = await self._client.service_principals.get(request_configuration=config)
+        while page is not None:
+            if page.value:
+                selected.extend(page.value)
+            next_link = page.odata_next_link
+            if not next_link:
+                break
+            page = await self._client.service_principals.with_url(next_link).get()
+        return selected
+
+    async def _resolve_service_principal(self, object_id: str) -> ServicePrincipal:
+        """Resolve by object id; fall back to `appId eq '{id}'` only on a 404."""
+        item_config = RequestConfiguration(
             query_parameters=ServicePrincipalItemRequestBuilder.ServicePrincipalItemRequestBuilderGetQueryParameters(
-                select=RESOURCE_SELECT,
+                select=SP_SELECT,
             )
         )
-        resource = await client.service_principals.by_service_principal_id(
-            resource_id
-        ).get(request_configuration=config)
-        if resource is None:
-            return None, {}
-        return resource.display_name, app_role_value_map(resource)
+        try:
+            sp = await self._client.service_principals.by_service_principal_id(
+                object_id
+            ).get(request_configuration=item_config)
+        except APIError as exc:
+            if exc.response_status_code != 404:
+                raise
+            sp = None
 
-    return await resource_cache.do(f"/servicePrincipals/{resource_id}", fetch)
+        if sp is not None:
+            return sp
 
-
-async def collect_api_permissions(
-    client: GraphServiceClient,
-    object_id: str,
-    resource_cache: SingleFlight[str, ResourceInfo],
-) -> tuple[list[ApplicationPermissionRecord], list[DelegatedPermissionRecord]]:
-    """Collect the SP's application and delegated API permissions.
-
-    Application permissions (`appRoleAssignments`) resolve their `appRoleId` to a
-    human-readable value through the resource SP's `appRoles`; delegated
-    permissions (`oauth2PermissionGrants`) resolve only their resource display
-    name. Both resolutions go through `resource_cache` keyed by `resourceId`, so a
-    resource SP is fetched once per run.
-    """
-    sp_item = client.service_principals.by_service_principal_id(object_id)
-
-    application_permissions: list[ApplicationPermissionRecord] = []
-    for assignment in await _page_all(sp_item.app_role_assignments):
-        resource_id = assignment.resource_id
-        display_name, app_roles = (None, {})
-        if resource_id is not None:
-            display_name, app_roles = await _resolve_resource(
-                client, resource_cache, str(resource_id)
+        # 404 on the object-id route: try resolving the value as an appId.
+        escaped = object_id.replace("'", "''")
+        list_config = RequestConfiguration(
+            query_parameters=ServicePrincipalsRequestBuilder.ServicePrincipalsRequestBuilderGetQueryParameters(
+                filter=f"appId eq '{escaped}'",
+                select=SP_SELECT,
             )
-        permission = resolve_app_role_value(assignment.app_role_id, app_roles)
-        application_permissions.append(
-            application_permission_from_graph(assignment, display_name, permission)
         )
-
-    delegated_permissions: list[DelegatedPermissionRecord] = []
-    for grant in await _page_all(sp_item.oauth2_permission_grants):
-        resource_id = grant.resource_id
-        display_name = None
-        if resource_id is not None:
-            display_name, _ = await _resolve_resource(
-                client, resource_cache, str(resource_id)
+        page = await self._client.service_principals.get(
+            request_configuration=list_config
+        )
+        matches = page.value if page is not None and page.value else []
+        if not matches:
+            raise LookupError(
+                f"No service principal found by object id or appId '{object_id}'."
             )
-        delegated_permissions.append(
-            delegated_permission_from_graph(grant, display_name)
+        return matches[0]
+
+    async def _resolve_application(self, app_id: str) -> Application | None:
+        """Fetch the related Application by `appId eq`; `None` if there is none."""
+        escaped = app_id.replace("'", "''")
+        config = RequestConfiguration(
+            query_parameters=ApplicationsRequestBuilder.ApplicationsRequestBuilderGetQueryParameters(
+                filter=f"appId eq '{escaped}'",
+                select=APP_SELECT,
+            )
+        )
+        page = await self._client.applications.get(request_configuration=config)
+        matches = page.value if page is not None and page.value else []
+        return matches[0] if matches else None
+
+    async def _collect_all(
+        self, service_principals: list[ServicePrincipal]
+    ) -> tuple[list[ServicePrincipalRecord], list[str]]:
+        """Collect a list of already-resolved SPs into records, isolating failures.
+
+        Shared by both selection paths so a per-SP failure never aborts the batch.
+        SPs are processed concurrently under this instance's `asyncio.Semaphore`
+        bound so a large fleet completes without flooding the tenant. The shared
+        `schedule_cache`/`resource_cache` mean a group's directory-role schedules
+        and a resource SP's appRoles/display name are each fetched once for the run
+        — single-flight keeps them from stampeding under concurrency. Per-SP
+        sections already degrade to SP Gaps; an unexpected collection failure here
+        degrades to a Run Error rather than dropping every other SP.
+        """
+        run_errors: list[str] = []
+
+        async def collect_one(sp: ServicePrincipal) -> ServicePrincipalRecord | None:
+            async with self._semaphore:
+                try:
+                    return await self._collect_for_service_principal(sp)
+                except Exception as exc:  # noqa: BLE001 - degrade to a Run Error
+                    run_errors.append(f"Failed to collect '{sp.id}': {exc}")
+                    return None
+
+        results = await asyncio.gather(*(collect_one(sp) for sp in service_principals))
+        records = [record for record in results if record is not None]
+        return records, run_errors
+
+    async def _collect_for_service_principal(
+        self, sp: ServicePrincipal
+    ) -> ServicePrincipalRecord:
+        """Build a record for an already-resolved SP: Application, memberships, roles.
+
+        Every section degrades to an SP Gap in the record's `errors[]` rather than
+        aborting the whole SP (ADR-0002 two-tier failures), so this never raises:
+        the base record is mapped first from the already-resolved SP, then the
+        independent sections are gathered concurrently. The three chains carry the
+        only intra-SP ordering: owners follows Application resolution (it needs the
+        Application object id), and directory-role attribution follows memberships.
+        """
+        record = sp_record_from_graph(sp, None)
+        now = datetime.now(UTC)
+        record["credentials"] = map_credentials(
+            "servicePrincipal", sp.password_credentials, sp.key_credentials, now
         )
 
-    return application_permissions, delegated_permissions
+        async def application_and_owners() -> None:
+            app_object_id: str | None = None
+            if sp.app_id:
+                try:
+                    application = await self._resolve_application(sp.app_id)
+                except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+                    record["errors"].append(f"Failed to resolve application: {exc}")
+                else:
+                    if application is not None:
+                        record["application"] = application_record_from_graph(
+                            application
+                        )
+                        app_object_id = application.id
+                        record["credentials"].extend(
+                            map_credentials(
+                                "application",
+                                application.password_credentials,
+                                application.key_credentials,
+                                now,
+                            )
+                        )
+                    else:
+                        record["errors"].append(
+                            "No Application object found for appId "
+                            f"'{sp.app_id}' (SP Gap)"
+                        )
+            try:
+                record["owners"] = await self.collect_owners(
+                    record["objectId"], app_object_id
+                )
+            except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+                record["errors"].append(f"Failed to collect owners: {exc}")
 
+        async def memberships_and_roles() -> None:
+            try:
+                record["groupMemberships"] = await self.collect_group_memberships(
+                    record["objectId"]
+                )
+            except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+                record["errors"].append(f"Failed to collect group memberships: {exc}")
+            try:
+                active, eligible = await self.collect_pim_for_groups(record["objectId"])
+                record["groupMemberships"] = apply_pim_membership(
+                    record["groupMemberships"], active, eligible
+                )
+            except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+                record["errors"].append(
+                    f"Failed to collect PIM-for-Groups status: {exc}"
+                )
+            try:
+                record["directoryRoles"] = await self.collect_directory_roles(
+                    record["objectId"], record["groupMemberships"]
+                )
+            except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+                record["errors"].append(f"Failed to collect directory roles: {exc}")
 
-async def collect_owners(
-    client: GraphServiceClient,
-    object_id: str,
-    app_object_id: str | None,
-) -> list[OwnerRecord]:
-    """Collect Owners of the SP and (when present) its Application, flattened.
+        async def api_permissions() -> None:
+            try:
+                app_perms, delegated_perms = await self.collect_api_permissions(
+                    record["objectId"]
+                )
+                record["applicationPermissions"] = app_perms
+                record["delegatedPermissions"] = delegated_perms
+            except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
+                record["errors"].append(f"Failed to collect API permissions: {exc}")
 
-    Pages `/servicePrincipals/{id}/owners` and, only when the SP has an
-    Application object, `/applications/{id}/owners`, each with `$select=id,
-    displayName`. Every entry is tagged with which object it owns; `ownerType` is
-    derived from the owner's directory subtype so a non-human owner is visible.
-    """
-    sp_config = RequestConfiguration(
-        query_parameters=ServicePrincipalOwnersRequestBuilder.OwnersRequestBuilderGetQueryParameters(
-            select=OWNER_SELECT,
+        await asyncio.gather(
+            application_and_owners(), memberships_and_roles(), api_permissions()
         )
-    )
-    sp_item = client.service_principals.by_service_principal_id(object_id)
-    owners = [
-        owner_from_graph(obj, "servicePrincipal")
-        for obj in await _page_all(sp_item.owners, sp_config)
-        if isinstance(obj, DirectoryObject)
-    ]
-    if app_object_id is not None:
-        app_config = RequestConfiguration(
-            query_parameters=ApplicationOwnersRequestBuilder.OwnersRequestBuilderGetQueryParameters(
+        return record
+
+    async def collect_group_memberships(
+        self, object_id: str
+    ) -> list[GroupMembershipRecord]:
+        """Collect a Service Principal's group memberships, labeled by how held.
+
+        Pages `memberOf` (labeled `direct`) and `transitiveMemberOf` (labeled
+        `transitive`), requesting `isAssignableToRole` so downstream via-group
+        attribution can decide which groups actually confer a directory role.
+        """
+        sp_item = self._client.service_principals.by_service_principal_id(object_id)
+        direct_config = RequestConfiguration(
+            query_parameters=MemberOfRequestBuilder.MemberOfRequestBuilderGetQueryParameters(
+                select=GROUP_SELECT,
+            )
+        )
+        transitive_config = RequestConfiguration(
+            query_parameters=TransitiveMemberOfRequestBuilder.TransitiveMemberOfRequestBuilderGetQueryParameters(
+                select=GROUP_SELECT,
+            )
+        )
+        memberships = [
+            group_membership_from_graph(group, "direct")
+            for group in await _page_groups(sp_item.member_of, direct_config)
+        ]
+        memberships.extend(
+            group_membership_from_graph(group, "transitive")
+            for group in await _page_groups(
+                sp_item.transitive_member_of, transitive_config
+            )
+        )
+        return memberships
+
+    async def resolve_group_name(self, group_id: str) -> str | None:
+        """Resolve a group's display name, fetching at most once per group id.
+
+        Backed by the instance's group-name cache: concurrent or repeat lookups
+        for the same group share one `GET /groups/{id}` instead of refetching.
+
+        The cache key is namespaced by the Graph resource path (`/groups/{id}`) so
+        it never collides with the other instance caches (e.g. schedules) keyed by
+        bare id.
+        """
+
+        async def fetch() -> str | None:
+            config = RequestConfiguration(
+                query_parameters=GroupItemRequestBuilder.GroupItemRequestBuilderGetQueryParameters(
+                    select=["id", "displayName"],
+                )
+            )
+            group = await self._client.groups.by_group_id(group_id).get(
+                request_configuration=config
+            )
+            return group.display_name if group is not None else None
+
+        return await self._group_name_cache.do(f"/groups/{group_id}", fetch)
+
+    async def _principal_schedules(
+        self, principal_id: str
+    ) -> tuple[list[RoleSchedule], list[RoleSchedule]]:
+        """Fetch (active, eligible) directory-role schedules for one principal id.
+
+        The principal may be the SP itself (direct paths) or a role-assignable group
+        (via-group paths); both are filtered by `principalId` with
+        `$expand=roleDefinition` so role display names resolve in the same call.
+        """
+        escaped = principal_id.replace("'", "''")
+        active_config = RequestConfiguration(
+            query_parameters=RoleAssignmentSchedulesRequestBuilder.RoleAssignmentSchedulesRequestBuilderGetQueryParameters(
+                filter=f"principalId eq '{escaped}'",
+                expand=["roleDefinition"],
+            )
+        )
+        eligible_config = RequestConfiguration(
+            query_parameters=RoleEligibilitySchedulesRequestBuilder.RoleEligibilitySchedulesRequestBuilderGetQueryParameters(
+                filter=f"principalId eq '{escaped}'",
+                expand=["roleDefinition"],
+            )
+        )
+        directory = self._client.role_management.directory
+        active = await _page_all(directory.role_assignment_schedules, active_config)
+        eligible = await _page_all(
+            directory.role_eligibility_schedules, eligible_config
+        )
+        return active, eligible
+
+    async def collect_pim_for_groups(
+        self, principal_id: str
+    ) -> tuple[
+        list[PrivilegedAccessGroupAssignmentSchedule],
+        list[PrivilegedAccessGroupEligibilitySchedule],
+    ]:
+        """Fetch the SP's (active, eligible) PIM-for-Groups membership schedules.
+
+        Both endpoints return HTTP 400 without a `$filter`, so each is always issued
+        with a `principalId` filter; `groupId` and `accessId` are then read off the
+        results by `apply_pim_membership`. Returns standing-membership (assignment)
+        schedules and must-activate (eligibility) schedules separately.
+        """
+        escaped = principal_id.replace("'", "''")
+        active_config = RequestConfiguration(
+            query_parameters=AssignmentSchedulesRequestBuilder.AssignmentSchedulesRequestBuilderGetQueryParameters(
+                filter=f"principalId eq '{escaped}'",
+            )
+        )
+        eligible_config = RequestConfiguration(
+            query_parameters=EligibilitySchedulesRequestBuilder.EligibilitySchedulesRequestBuilderGetQueryParameters(
+                filter=f"principalId eq '{escaped}'",
+            )
+        )
+        group = self._client.identity_governance.privileged_access.group
+        active = await _page_pim_schedules(group.assignment_schedules, active_config)
+        eligible = await _page_pim_schedules(
+            group.eligibility_schedules, eligible_config
+        )
+        return [
+            s for s in active if isinstance(s, PrivilegedAccessGroupAssignmentSchedule)
+        ], [
+            s
+            for s in eligible
+            if isinstance(s, PrivilegedAccessGroupEligibilitySchedule)
+        ]
+
+    async def collect_directory_roles(
+        self,
+        object_id: str,
+        memberships: list[GroupMembershipRecord],
+    ) -> list[DirectoryRoleRecord]:
+        """Collect Directory Roles across all four paths, with Via-group attribution.
+
+        Direct paths filter the SP's own id (`source = "direct"`). Via-group paths
+        query, for each role-assignable group the SP is a transitive member of, the
+        group's schedules and attribute every returned role to the SP with the
+        group's display name as `source` and its id as `sourceGroupId` — regardless
+        of intermediate non-role-assignable groups, since `memberships` already holds
+        the transitive closure.
+
+        A group's schedules are fetched at most once across every SP that reaches it
+        via this instance's `schedule_cache`. Its key is namespaced by the Graph
+        resource path so the cache never collides with other single-flight users
+        (e.g. group-name lookups) keyed by bare id.
+        """
+        roles: list[DirectoryRoleRecord] = []
+
+        active, eligible = await self._principal_schedules(object_id)
+        roles.extend(
+            directory_role_from_schedule(s, "active", "direct", None) for s in active
+        )
+        roles.extend(
+            directory_role_from_schedule(s, "eligible", "direct", None)
+            for s in eligible
+        )
+
+        seen_groups: set[str] = set()
+        for membership in memberships:
+            group_id = membership["groupId"]
+            if not membership["isAssignableToRole"] or group_id is None:
+                continue
+            if group_id in seen_groups:
+                continue
+            seen_groups.add(group_id)
+            source = membership["displayName"] or group_id
+
+            async def fetch(
+                gid: str = group_id, src: str = source
+            ) -> list[DirectoryRoleRecord]:
+                g_active, g_eligible = await self._principal_schedules(gid)
+                return [
+                    directory_role_from_schedule(s, "active", src, gid)
+                    for s in g_active
+                ] + [
+                    directory_role_from_schedule(s, "eligible", src, gid)
+                    for s in g_eligible
+                ]
+
+            roles.extend(
+                await self._schedule_cache.do(
+                    f"/roleManagement/directory/schedules/{group_id}", fetch
+                )
+            )
+        return roles
+
+    async def _resolve_resource(self, resource_id: str) -> ResourceInfo:
+        """Resolve a resource SP to its display name and `appRoleId -> value` map.
+
+        Backed by this instance's `resource_cache`, keyed by the Graph resource
+        path: the Microsoft Graph SP — targeted by most assignments — is fetched
+        once and reused across every SP and both permission planes for the run.
+        """
+
+        async def fetch() -> ResourceInfo:
+            config = RequestConfiguration(
+                query_parameters=ServicePrincipalItemRequestBuilder.ServicePrincipalItemRequestBuilderGetQueryParameters(
+                    select=RESOURCE_SELECT,
+                )
+            )
+            resource = await self._client.service_principals.by_service_principal_id(
+                resource_id
+            ).get(request_configuration=config)
+            if resource is None:
+                return None, {}
+            return resource.display_name, app_role_value_map(resource)
+
+        return await self._resource_cache.do(f"/servicePrincipals/{resource_id}", fetch)
+
+    async def collect_api_permissions(
+        self, object_id: str
+    ) -> tuple[list[ApplicationPermissionRecord], list[DelegatedPermissionRecord]]:
+        """Collect the SP's application and delegated API permissions.
+
+        Application permissions (`appRoleAssignments`) resolve their `appRoleId` to a
+        human-readable value through the resource SP's `appRoles`; delegated
+        permissions (`oauth2PermissionGrants`) resolve only their resource display
+        name. Both resolutions go through this instance's `resource_cache` keyed by
+        `resourceId`, so a resource SP is fetched once per run.
+        """
+        sp_item = self._client.service_principals.by_service_principal_id(object_id)
+
+        application_permissions: list[ApplicationPermissionRecord] = []
+        for assignment in await _page_all(sp_item.app_role_assignments):
+            resource_id = assignment.resource_id
+            display_name, app_roles = (None, {})
+            if resource_id is not None:
+                display_name, app_roles = await self._resolve_resource(str(resource_id))
+            permission = resolve_app_role_value(assignment.app_role_id, app_roles)
+            application_permissions.append(
+                application_permission_from_graph(assignment, display_name, permission)
+            )
+
+        delegated_permissions: list[DelegatedPermissionRecord] = []
+        for grant in await _page_all(sp_item.oauth2_permission_grants):
+            resource_id = grant.resource_id
+            display_name = None
+            if resource_id is not None:
+                display_name, _ = await self._resolve_resource(str(resource_id))
+            delegated_permissions.append(
+                delegated_permission_from_graph(grant, display_name)
+            )
+
+        return application_permissions, delegated_permissions
+
+    async def collect_owners(
+        self, object_id: str, app_object_id: str | None
+    ) -> list[OwnerRecord]:
+        """Collect Owners of the SP and (when present) its Application, flattened.
+
+        Pages `/servicePrincipals/{id}/owners` and, only when the SP has an
+        Application object, `/applications/{id}/owners`, each with `$select=id,
+        displayName`. Every entry is tagged with which object it owns; `ownerType` is
+        derived from the owner's directory subtype so a non-human owner is visible.
+        """
+        sp_config = RequestConfiguration(
+            query_parameters=ServicePrincipalOwnersRequestBuilder.OwnersRequestBuilderGetQueryParameters(
                 select=OWNER_SELECT,
             )
         )
-        app_item = client.applications.by_application_id(app_object_id)
-        owners.extend(
-            owner_from_graph(obj, "application")
-            for obj in await _page_all(app_item.owners, app_config)
+        sp_item = self._client.service_principals.by_service_principal_id(object_id)
+        owners = [
+            owner_from_graph(obj, "servicePrincipal")
+            for obj in await _page_all(sp_item.owners, sp_config)
             if isinstance(obj, DirectoryObject)
-        )
-    return owners
-
-
-async def _collect_for_service_principal(
-    client: GraphServiceClient,
-    sp: ServicePrincipal,
-    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]],
-    resource_cache: SingleFlight[str, ResourceInfo],
-) -> ServicePrincipalRecord:
-    """Build a record for an already-resolved SP: Application, memberships, roles.
-
-    Every section degrades to an SP Gap in the record's `errors[]` rather than
-    aborting the whole SP (ADR-0002 two-tier failures), so this never raises: the
-    base record is mapped first from the already-resolved SP, then the
-    independent sections are gathered concurrently. The three chains carry the
-    only intra-SP ordering: owners follows Application resolution (it needs the
-    Application object id), and directory-role attribution follows memberships.
-    """
-    record = sp_record_from_graph(sp, None)
-    now = datetime.now(UTC)
-    record["credentials"] = map_credentials(
-        "servicePrincipal", sp.password_credentials, sp.key_credentials, now
-    )
-
-    async def application_and_owners() -> None:
-        app_object_id: str | None = None
-        if sp.app_id:
-            try:
-                application = await _resolve_application(client, sp.app_id)
-            except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-                record["errors"].append(f"Failed to resolve application: {exc}")
-            else:
-                if application is not None:
-                    record["application"] = application_record_from_graph(application)
-                    app_object_id = application.id
-                    record["credentials"].extend(
-                        map_credentials(
-                            "application",
-                            application.password_credentials,
-                            application.key_credentials,
-                            now,
-                        )
-                    )
-                else:
-                    record["errors"].append(
-                        f"No Application object found for appId '{sp.app_id}' (SP Gap)"
-                    )
-        try:
-            record["owners"] = await collect_owners(
-                client, record["objectId"], app_object_id
-            )
-        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-            record["errors"].append(f"Failed to collect owners: {exc}")
-
-    async def memberships_and_roles() -> None:
-        try:
-            record["groupMemberships"] = await collect_group_memberships(
-                client, record["objectId"]
-            )
-        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-            record["errors"].append(f"Failed to collect group memberships: {exc}")
-        try:
-            active, eligible = await collect_pim_for_groups(client, record["objectId"])
-            record["groupMemberships"] = apply_pim_membership(
-                record["groupMemberships"], active, eligible
-            )
-        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-            record["errors"].append(f"Failed to collect PIM-for-Groups status: {exc}")
-        try:
-            record["directoryRoles"] = await collect_directory_roles(
-                client, record["objectId"], record["groupMemberships"], schedule_cache
-            )
-        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-            record["errors"].append(f"Failed to collect directory roles: {exc}")
-
-    async def api_permissions() -> None:
-        try:
-            app_perms, delegated_perms = await collect_api_permissions(
-                client, record["objectId"], resource_cache
-            )
-            record["applicationPermissions"] = app_perms
-            record["delegatedPermissions"] = delegated_perms
-        except Exception as exc:  # noqa: BLE001 - degrade to an SP Gap
-            record["errors"].append(f"Failed to collect API permissions: {exc}")
-
-    await asyncio.gather(
-        application_and_owners(), memberships_and_roles(), api_permissions()
-    )
-    return record
-
-
-async def _collect_all(
-    client: GraphServiceClient,
-    service_principals: list[ServicePrincipal],
-    concurrency: int = DEFAULT_CONCURRENCY,
-) -> tuple[list[ServicePrincipalRecord], list[str]]:
-    """Collect a list of already-resolved SPs into records, isolating failures.
-
-    Shared by both selection paths so a per-SP failure never aborts the batch.
-    SPs are processed concurrently under a single `asyncio.Semaphore` bound
-    (`concurrency`) so a large fleet completes without flooding the tenant. One
-    `schedule_cache` and one `resource_cache` are shared across the whole
-    selection so a group's directory-role schedules and a resource SP's
-    appRoles/display name are each fetched once for the run — single-flight keeps
-    them from stampeding under concurrency. Per-SP sections already degrade to SP
-    Gaps; an unexpected collection failure here degrades to a Run Error rather
-    than dropping every other SP.
-    """
-    schedule_cache: SingleFlight[str, list[DirectoryRoleRecord]] = SingleFlight()
-    resource_cache: SingleFlight[str, ResourceInfo] = SingleFlight()
-    semaphore = asyncio.Semaphore(concurrency)
-    run_errors: list[str] = []
-
-    async def collect_one(sp: ServicePrincipal) -> ServicePrincipalRecord | None:
-        async with semaphore:
-            try:
-                return await _collect_for_service_principal(
-                    client, sp, schedule_cache, resource_cache
+        ]
+        if app_object_id is not None:
+            app_config = RequestConfiguration(
+                query_parameters=ApplicationOwnersRequestBuilder.OwnersRequestBuilderGetQueryParameters(
+                    select=OWNER_SELECT,
                 )
-            except Exception as exc:  # noqa: BLE001 - degrade to a Run Error
-                run_errors.append(f"Failed to collect '{sp.id}': {exc}")
-                return None
-
-    results = await asyncio.gather(*(collect_one(sp) for sp in service_principals))
-    records = [record for record in results if record is not None]
-    return records, run_errors
-
-
-async def collect_by_object_ids(
-    client: GraphServiceClient,
-    object_ids: list[str],
-    concurrency: int = DEFAULT_CONCURRENCY,
-) -> tuple[list[ServicePrincipalRecord], list[str]]:
-    """Collect records for an explicit set of object ids.
-
-    Each id is resolved independently, so an unresolvable id degrades to a Run
-    Error rather than aborting the run; the rest are then collected via the
-    shared `_collect_all` path under the `concurrency` bound. Returns the records
-    plus all Run Errors.
-    """
-    service_principals: list[ServicePrincipal] = []
-    run_errors: list[str] = []
-    for object_id in object_ids:
-        try:
-            service_principals.append(
-                await _resolve_service_principal(client, object_id)
             )
-        except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
-            run_errors.append(f"Failed to resolve '{object_id}': {exc}")
-    records, collect_errors = await _collect_all(
-        client, service_principals, concurrency
-    )
-    return records, run_errors + collect_errors
-
-
-async def _select_by_tag(
-    client: GraphServiceClient, tag: str
-) -> list[ServicePrincipal]:
-    """Select Service Principals by tag, paging through all results.
-
-    Queries `tags/any(c:c eq '{tag}')` with OData single-quote escaping and
-    follows `@odata.nextLink` until the result set is exhausted. Requests the
-    unified `$select` so tag-selected SPs share the by-id baseline.
-    """
-    escaped = tag.replace("'", "''")
-    config = RequestConfiguration(
-        query_parameters=ServicePrincipalsRequestBuilder.ServicePrincipalsRequestBuilderGetQueryParameters(
-            filter=f"tags/any(c:c eq '{escaped}')",
-            select=SP_SELECT,
-        )
-    )
-    selected: list[ServicePrincipal] = []
-    page = await client.service_principals.get(request_configuration=config)
-    while page is not None:
-        if page.value:
-            selected.extend(page.value)
-        next_link = page.odata_next_link
-        if not next_link:
-            break
-        page = await client.service_principals.with_url(next_link).get()
-    return selected
-
-
-async def collect_by_tag(
-    client: GraphServiceClient, tag: str, concurrency: int = DEFAULT_CONCURRENCY
-) -> tuple[list[ServicePrincipalRecord], list[str]]:
-    """Collect every Service Principal carrying `tag` into records.
-
-    Tag selection is a single Graph query: if it fails the whole selection is a
-    Run Error. The selected SPs are then collected via the shared `_collect_all`
-    path under the `concurrency` bound, so one SP's failure no longer drops the
-    rest. Returns the records plus all Run Errors.
-    """
-    try:
-        service_principals = await _select_by_tag(client, tag)
-    except Exception as exc:  # noqa: BLE001 - degrade to a Run Error, never abort
-        return [], [f"Failed to select by tag '{tag}': {exc}"]
-    return await _collect_all(client, service_principals, concurrency)
+            app_item = self._client.applications.by_application_id(app_object_id)
+            owners.extend(
+                owner_from_graph(obj, "application")
+                for obj in await _page_all(app_item.owners, app_config)
+                if isinstance(obj, DirectoryObject)
+            )
+        return owners
