@@ -143,24 +143,30 @@ Application) with SP Gaps, and a `runErrors` entry — and
 
 ## Required permissions
 
-The tool inherits the signed-in user's roles across both planes:
+The tool authenticates as your delegated `az login` user token across both
+planes — it is not an app registration; every Graph call is made on behalf of
+your signed-in user.
 
-- **Directory plane (Entra).** **Global Reader** is recommended — it covers
-  directory reads plus the role-management and PIM reads the audit needs.
-  **Directory Readers** alone is not enough: it cannot read the directory-role
-  schedule or the PIM-for-Groups endpoints, so those sections degrade to SP Gaps
-  in each affected SP's `errors[]` (the run still completes and exits 0).
+- **Directory plane (Entra).** A call succeeds only when **both** hold: your
+  user has a directory role that can read the data (**Global Reader** is enough —
+  it covers directory reads, the role-management reads, and PIM-for-Groups), and
+  the Graph token actually carries the matching delegated scope.
 
-  The role-management and PIM-for-Groups endpoints additionally require the
-  matching **delegated Graph permissions** to be consented for the Azure CLI
-  application — the Entra role alone is not sufficient. Without them Graph
-  returns `403 PermissionScopeNotGranted` and those two sections degrade to SP
-  Gaps (the affected `errors[]` entry names the exact missing scopes, e.g.
-  `RoleAssignmentSchedule.Read.Directory`, `RoleManagement.Read.All`,
-  `PrivilegedAccess.Read.AzureADGroup`). A tenant admin grants them once with
-  admin consent for the Azure CLI client (app id
-  `04b07795-8ddb-461a-bbee-02f9e1bf7b46`); the run still completes and exits 0
-  in the meantime.
+  The Azure CLI sign-in does not include the privileged role-management / PIM
+  scopes by default, so the directory-role schedule and PIM-for-Groups endpoints
+  return `403 PermissionScopeNotGranted` until those scopes are consented for the
+  `az` sign-in. Grant them by signing in with the scopes (admin consent is
+  required — they are admin-restricted):
+
+  ```bash
+  az login --scope "https://graph.microsoft.com/RoleManagement.Read.All https://graph.microsoft.com/PrivilegedAccess.Read.AzureADGroup"
+  ```
+
+  After consent the tool's `.default` token picks the scopes up automatically —
+  no flag on `sp-audit` is needed. Until then those two sections degrade to SP
+  Gaps (the affected `errors[]` entry names the exact missing scopes) and the run
+  still completes and exits 0. **Directory Readers** alone is not enough even
+  once the scopes are consented: it cannot read those objects.
 - **Azure RBAC plane (ARM).** A **Reader** (or equivalent) role over the
   management group hierarchy you want covered, so the Azure Resource Graph query
   can resolve assignments at every scope.
