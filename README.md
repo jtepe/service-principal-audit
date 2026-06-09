@@ -6,17 +6,20 @@ everything the directory (Entra) and Azure RBAC planes know about them and write
 it to a single JSON **Audit Report**, optionally rendered to a self-contained HTML
 view.
 
-The tool runs locally as the user who ran `az login`, inheriting that user's
-permissions. It needs no dedicated service principal or managed identity, and it
-never writes to the tenant. Domain terms used throughout (Service Principal,
-Application, Directory Role, Azure Role Assignment, Plane, Credential, Owner,
-Audit Report, Run Error, SP Gap, Via-group attribution) are defined in
+By default the tool runs as the user who ran `az login`, inheriting that user's
+permissions, and never writes to the tenant. The Microsoft Graph (directory)
+plane can instead authenticate as a **service principal** or a **managed
+identity** (see [Authentication](#authentication)); the Azure RBAC plane always
+uses `az login`. Domain terms used throughout (Service Principal, Application,
+Directory Role, Azure Role Assignment, Plane, Credential, Owner, Audit Report,
+Run Error, SP Gap, Via-group attribution) are defined in
 [`CONTEXT.md`](CONTEXT.md).
 
 ## Prerequisites
 
 1. **Azure CLI** — install `az` and ensure it is on your `PATH`.
-2. **Log in** — run `az login`. The audit runs as the signed-in user.
+2. **Log in** — run `az login` (the Azure RBAC plane always uses it; on a
+   managed-identity host, `az login --identity` works too).
 3. **Permissions** — see [Required permissions](#required-permissions) below.
    In short: **Global Reader** in Entra plus a **Reader** role over the
    management group hierarchy you want covered.
@@ -141,35 +144,49 @@ statuses, an active and an eligible Directory Role, a managed identity (`null`
 Application) with SP Gaps, and a `runErrors` entry — and
 [`example-audit.html`](example-audit.html) for the rendered view.
 
+## Authentication
+
+The **Azure RBAC plane always uses `az login`** (it shells out to `az graph
+query`), so an active CLI login is always required and is the source of the
+reported `tenantId`. On a managed-identity host, `az login --identity` satisfies
+this.
+
+The **Microsoft Graph (directory) plane** selects its credential by precedence:
+
+1. **Service principal** — when a client id, client secret, and tenant id are all
+   provided (via `--client-id` / `--client-secret` / `--tenant-id` or the
+   `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` environment
+   variables). Prefer the environment variable for the secret — command-line
+   values are visible in process listings.
+2. **Managed identity** — when `--managed-identity` is passed (system-assigned,
+   or user-assigned when `--client-id` is also given).
+3. **`az login` user** — the default when neither of the above is configured.
+
+```bash
+# Service principal for the Graph plane (RBAC plane still uses az login):
+export AZURE_CLIENT_SECRET='...'
+spyglass --client-id <app-id> --tenant-id <tenant-id> --object-id <sp-object-id>
+
+# Managed identity for the Graph plane:
+spyglass --managed-identity --object-id <sp-object-id>
+```
+
 ## Required permissions
 
-The tool authenticates as your delegated `az login` user token across both
-planes — it is not an app registration; every Graph call is made on behalf of
-your signed-in user.
-
-- **Directory plane (Entra).** A call succeeds only when **both** hold: your
-  user has a directory role that can read the data (**Global Reader** is enough —
-  it covers directory reads, the role-management reads, and PIM-for-Groups), and
-  the Graph token actually carries the matching delegated scope.
-
-  The Azure CLI sign-in does not include the privileged role-management / PIM
-  scopes by default, so the directory-role schedule and PIM-for-Groups endpoints
-  return `403 PermissionScopeNotGranted` until those scopes are consented for the
-  `az` sign-in. Grant them by signing in with the scopes (admin consent is
-  required — they are admin-restricted):
-
-  ```bash
-  az login --scope "https://graph.microsoft.com/RoleManagement.Read.All https://graph.microsoft.com/PrivilegedAccess.Read.AzureADGroup"
-  ```
-
-  After consent the tool's `.default` token picks the scopes up automatically —
-  no flag on `sp-audit` is needed. Until then those two sections degrade to SP
-  Gaps (the affected `errors[]` entry names the exact missing scopes) and the run
-  still completes and exits 0. **Directory Readers** alone is not enough even
-  once the scopes are consented: it cannot read those objects.
+- **Directory plane (Entra).**
+  - **`az login` user.** A directory role that can read the data — **Global
+    Reader** is enough; it covers directory reads, the role-management reads, and
+    PIM-for-Groups. **Directory Readers** alone cannot read the directory-role
+    schedule or the PIM-for-Groups endpoints, so those sections degrade to SP
+    Gaps in each affected SP's `errors[]` (the run still completes and exits 0).
+  - **Service principal / managed identity.** Grant the **application** Graph
+    permissions `Directory.Read.All`, `Application.Read.All`,
+    `RoleManagement.Read.All`, and `PrivilegedAccess.Read.AzureADGroup` (admin
+    consent). Without the last two, the directory-role and PIM-for-Groups
+    sections return `403` and degrade to SP Gaps; the run still exits 0.
 - **Azure RBAC plane (ARM).** A **Reader** (or equivalent) role over the
-  management group hierarchy you want covered, so the Azure Resource Graph query
-  can resolve assignments at every scope.
+  management group hierarchy you want covered, held by the `az login` identity,
+  so the Azure Resource Graph query can resolve assignments at every scope.
 
 ## Non-goals
 
