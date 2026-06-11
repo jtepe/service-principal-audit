@@ -1,4 +1,6 @@
-# Spyglass
+<p align="center">
+  <img src="assets/logo-wordmark.svg" alt="Spyglass — read-only audits for Entra service principals" width="560">
+</p>
 
 A read-only spyglass for Microsoft Entra service principals: a CLI that, for a
 selected set of Entra **Service Principals**, gathers
