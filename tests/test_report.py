@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from sp_audit.models import Selection, ServicePrincipalRecord
-from sp_audit.report import build_report
+from spyglass.models import Selection, ServicePrincipalRecord
+from spyglass.report import build_report
 
 GENERATED_AT = "2026-05-31T00:00:00+00:00"
 SELECTION: Selection = {"objectIds": ["oid-1"]}

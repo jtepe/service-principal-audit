@@ -1,7 +1,7 @@
 [project]
-name = "service-principal-audit"
+name = "spyglass"
 version = "0.1.0"
-description = "Read-only CLI that audits Entra service principals across the directory and Azure RBAC planes into a single JSON report."
+description = "A read-only spyglass for Microsoft Entra service principals: audits the directory and Azure RBAC planes into a single JSON report."
 requires-python = ">=3.14"
 dependencies = [
     "azure-identity>=1.19",
@@ -9,14 +9,14 @@ dependencies = [
 ]
 
 [project.scripts]
-sp-audit = "sp_audit.cli:main"
+spyglass = "spyglass.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/sp_audit"]
+packages = ["src/spyglass"]
 
 [dependency-groups]
 dev = [
@@ -28,7 +28,7 @@ dev = [
 [tool.ruff]
 src = ["src", "tests"]
 # render_html.py is the legacy standalone renderer; it is lifted/rewritten under
-# src/sp_audit/render in a later iteration and is not linted in the meantime.
+# src/spyglass/render in a later iteration and is not linted in the meantime.
 extend-exclude = ["render_html.py"]
 
 [tool.ruff.lint]

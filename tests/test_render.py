@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from sp_audit.models import AuditReport
-from sp_audit.render import render
+from spyglass.models import AuditReport
+from spyglass.render import render
 
 
 def _report(*, sp: dict[str, Any] | None = None) -> AuditReport:

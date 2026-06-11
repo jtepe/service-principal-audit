@@ -7,7 +7,7 @@ de-duplicated role-name resolution with a deleted-role GUID fallback.
 
 from __future__ import annotations
 
-from sp_audit.arg_transform import classify_scope, transform_assignments
+from spyglass.arg_transform import classify_scope, transform_assignments
 
 CONTRIBUTOR_GUID = "b24988ac-6180-42a0-ab88-20f7382dd24c"
 
