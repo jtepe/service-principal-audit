@@ -56,14 +56,17 @@ def _env(name: str) -> str | None:
 def resolve_graph_auth_config(
     *,
     client_id: str | None,
-    client_secret: str | None,
     tenant_id: str | None,
     managed_identity: bool,
 ) -> GraphAuthConfig:
-    """Merge CLI inputs with the standard `AZURE_*` env vars (CLI wins)."""
+    """Merge CLI inputs with the standard `AZURE_*` env vars (CLI wins).
+
+    The client secret is read only from `AZURE_CLIENT_SECRET` — never a flag — so
+    it is not exposed in shell history or process listings.
+    """
     return GraphAuthConfig(
         client_id=client_id or _env("AZURE_CLIENT_ID"),
-        client_secret=client_secret or _env("AZURE_CLIENT_SECRET"),
+        client_secret=_env("AZURE_CLIENT_SECRET"),
         tenant_id=tenant_id or _env("AZURE_TENANT_ID"),
         managed_identity=managed_identity,
     )
@@ -106,9 +109,10 @@ def build_graph_credential(config: GraphAuthConfig) -> AsyncTokenCredential:
         if missing:
             raise PreconditionError(
                 "Service-principal authentication needs a client id, client "
-                f"secret, and tenant id; missing: {', '.join(missing)}. Pass "
-                "them via --client-id/--client-secret/--tenant-id or the "
-                "AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID env vars."
+                f"secret, and tenant id; missing: {', '.join(missing)}. Pass the "
+                "client id and tenant id via --client-id/--tenant-id (or "
+                "AZURE_CLIENT_ID/AZURE_TENANT_ID), and the secret via the "
+                "AZURE_CLIENT_SECRET environment variable."
             )
         # Narrowed to str by the missing-check above.
         assert config.client_id and config.client_secret and config.tenant_id

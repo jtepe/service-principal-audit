@@ -75,12 +75,11 @@ def test_resolve_prefers_cli_over_env(monkeypatch):
 
     config = resolve_graph_auth_config(
         client_id="cli-id",
-        client_secret=None,
         tenant_id=None,
         managed_identity=False,
     )
 
-    # CLI value wins; the unset secret/tenant fall back to the environment.
+    # CLI value wins; the unset tenant falls back to the environment.
     assert config.client_id == "cli-id"
     assert config.tenant_id == "env-tenant"
     assert config.client_secret is None
@@ -93,7 +92,6 @@ def test_resolve_reads_env_when_cli_absent(monkeypatch):
 
     config = resolve_graph_auth_config(
         client_id=None,
-        client_secret=None,
         tenant_id=None,
         managed_identity=False,
     )

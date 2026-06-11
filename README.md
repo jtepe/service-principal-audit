@@ -153,11 +153,11 @@ this.
 
 The **Microsoft Graph (directory) plane** selects its credential by precedence:
 
-1. **Service principal** — when a client id, client secret, and tenant id are all
-   provided (via `--client-id` / `--client-secret` / `--tenant-id` or the
-   `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` environment
-   variables). Prefer the environment variable for the secret — command-line
-   values are visible in process listings.
+1. **Service principal** — when a client id and tenant id are provided (via
+   `--client-id` / `--tenant-id` or `AZURE_CLIENT_ID` / `AZURE_TENANT_ID`) and
+   the secret is set in the `AZURE_CLIENT_SECRET` environment variable. The
+   secret is read only from the environment — never a flag — so it is not
+   exposed in shell history or process listings.
 2. **Managed identity** — when `--managed-identity` is passed (system-assigned,
    or user-assigned when `--client-id` is also given).
 3. **`az login` user** — the default when neither of the above is configured.
