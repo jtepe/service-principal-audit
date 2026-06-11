@@ -14,7 +14,7 @@ import uuid
 from msgraph.generated.models.key_credential import KeyCredential
 from msgraph.generated.models.password_credential import PasswordCredential
 
-from sp_audit.credentials import map_credentials
+from spyglass.credentials import map_credentials
 
 NOW = datetime.datetime(2026, 6, 1, tzinfo=datetime.UTC)
 KEY_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")

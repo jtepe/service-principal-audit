@@ -1,6 +1,7 @@
-# Service Principal Audit
+# Spyglass
 
-A read-only CLI that, for a selected set of Entra **Service Principals**, gathers
+A read-only spyglass for Microsoft Entra service principals: a CLI that, for a
+selected set of Entra **Service Principals**, gathers
 everything the directory (Entra) and Azure RBAC planes know about them and writes
 it to a single JSON **Audit Report**, optionally rendered to a self-contained HTML
 view.
@@ -21,16 +22,16 @@ Audit Report, Run Error, SP Gap, Via-group attribution) are defined in
    management group hierarchy you want covered.
 
 The project is managed with [uv](https://docs.astral.sh/uv/). Installing it
-exposes the `sp-audit` console command:
+exposes the `spyglass` console command:
 
 ```bash
 uv sync
-uv run sp-audit --help
+uv run spyglass --help
 ```
 
 ## Usage
 
-`sp-audit` always writes a JSON Audit Report. You choose the set of Service
+`spyglass` always writes a JSON Audit Report. You choose the set of Service
 Principals to audit with exactly one selection method.
 
 ### Select by object id
@@ -39,7 +40,7 @@ Pass one or more Service Principal `objectId`s (an `appId` is accepted as a
 fallback and resolved to its Service Principal). The flag repeats:
 
 ```bash
-uv run sp-audit \
+uv run spyglass \
   --object-id 22222222-2222-2222-2222-222222222222 \
   --object-id 99999999-9999-9999-9999-999999999999 \
   --output audit-report.json
@@ -51,7 +52,7 @@ Point `--ids-file` at a file of object ids — either a newline-separated list o
 a JSON array. Values are merged and de-duplicated with any `--object-id` flags:
 
 ```bash
-uv run sp-audit --ids-file ./sp-ids.txt --output audit-report.json
+uv run spyglass --ids-file ./sp-ids.txt --output audit-report.json
 ```
 
 ### Select by tag
@@ -60,7 +61,7 @@ Audit every Service Principal carrying a given Entra tag. This is mutually
 exclusive with `--object-id` / `--ids-file`:
 
 ```bash
-uv run sp-audit --tag terraform-iac --output audit-report.json
+uv run spyglass --tag terraform-iac --output audit-report.json
 ```
 
 ### Rendering HTML
@@ -72,10 +73,10 @@ path (and implies `--html`); by default the HTML path is the JSON path with an
 `.html` suffix.
 
 ```bash
-uv run sp-audit --tag terraform-iac --html
+uv run spyglass --tag terraform-iac --html
 # writes audit-report.json and audit-report.html
 
-uv run sp-audit --tag terraform-iac --html-output report.html
+uv run spyglass --tag terraform-iac --html-output report.html
 ```
 
 The HTML view is **security-focused**: it foregrounds Directory Roles,

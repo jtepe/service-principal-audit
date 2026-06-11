@@ -368,12 +368,12 @@ def render(report: AuditReport) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Service Principal Audit Report</title>
+<title>Spyglass — Service Principal Audit Report</title>
 <style>{_STYLE}</style>
 </head>
 <body>
 <header>
-<h1>Service Principal Audit Report</h1>
+<h1>Spyglass — Service Principal Audit Report</h1>
 {meta_header}
 <div class="toolbar">
 <input id="search" type="search" autocomplete="off" spellcheck="false"

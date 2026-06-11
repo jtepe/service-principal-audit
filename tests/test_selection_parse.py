@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sp_audit.selection_parse import merge_object_ids, parse_ids_file
+from spyglass.selection_parse import merge_object_ids, parse_ids_file
 
 
 def test_parse_ids_file_newline_list() -> None:

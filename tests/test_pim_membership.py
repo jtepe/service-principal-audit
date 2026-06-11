@@ -12,8 +12,8 @@ from msgraph.generated.models.privileged_access_group_relationships import (
     PrivilegedAccessGroupRelationships,
 )
 
-from sp_audit.entra import apply_pim_membership
-from sp_audit.models import GroupMembershipRecord
+from spyglass.entra import apply_pim_membership
+from spyglass.models import GroupMembershipRecord
 
 
 def _membership(

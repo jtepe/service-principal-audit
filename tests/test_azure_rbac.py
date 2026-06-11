@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sp_audit.azure_rbac import collect_azure_role_assignments
+from spyglass.azure_rbac import collect_azure_role_assignments
 
 
 def test_empty_selection_makes_no_subprocess_call() -> None:
@@ -13,7 +13,7 @@ def test_empty_selection_makes_no_subprocess_call() -> None:
 
 
 def test_run_arg_query_follows_skip_token_across_pages(monkeypatch) -> None:
-    from sp_audit import azure_rbac
+    from spyglass import azure_rbac
 
     pages = [
         # First page returns a continuation token...

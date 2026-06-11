@@ -22,7 +22,7 @@ from msgraph.generated.models.unified_role_eligibility_schedule import (
 )
 from msgraph.generated.models.user import User
 
-from sp_audit.entra import (
+from spyglass.entra import (
     app_role_value_map,
     application_permission_from_graph,
     application_record_from_graph,

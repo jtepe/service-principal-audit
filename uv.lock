@@ -786,7 +786,7 @@ wheels = [
 ]
 
 [[package]]
-name = "service-principal-audit"
+name = "spyglass"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

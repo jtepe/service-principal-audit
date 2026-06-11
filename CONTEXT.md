@@ -1,6 +1,6 @@
-# Service Principal Audit
+# Spyglass
 
-A read-only CLI that, for a selected set of Entra service principals, gathers
+A read-only CLI (`spyglass`) that, for a selected set of Entra service principals, gathers
 everything the directory (Entra) and Azure RBAC know about them and writes it to
 a single JSON file, optionally rendered to self-contained HTML.
 

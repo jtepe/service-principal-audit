@@ -1,4 +1,4 @@
-"""`sp-audit` command-line entry point.
+"""`spyglass` command-line entry point.
 
 Wires the modules into one async vertical path: gate on preconditions (fail
 fast, non-zero), then resolve the selected Service Principal, build the Audit
@@ -30,7 +30,7 @@ DEFAULT_OUTPUT = "audit-report.json"
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="sp-audit",
+        prog="spyglass",
         description=(
             "Audit Entra service principals across the directory plane and "
             "write a JSON Audit Report."
@@ -113,7 +113,7 @@ async def _run(args: argparse.Namespace) -> int:
     try:
         tenant_id = await verify_preconditions()
     except PreconditionError as exc:
-        print(f"sp-audit: precondition failed: {exc}", file=sys.stderr)
+        print(f"spyglass: precondition failed: {exc}", file=sys.stderr)
         return 2
 
     file_ids: list[str] = []
@@ -122,7 +122,7 @@ async def _run(args: argparse.Namespace) -> int:
             with open(args.ids_file, encoding="utf-8") as fh:
                 file_ids = parse_ids_file(fh.read())
         except (OSError, ValueError) as exc:
-            print(f"sp-audit: failed to read --ids-file: {exc}", file=sys.stderr)
+            print(f"spyglass: failed to read --ids-file: {exc}", file=sys.stderr)
             return 2
 
     selection: Selection
@@ -174,7 +174,7 @@ async def _run(args: argparse.Namespace) -> int:
         fh.write("\n")
 
     print(
-        f"sp-audit: wrote {len(report['servicePrincipals'])} service principal(s) "
+        f"spyglass: wrote {len(report['servicePrincipals'])} service principal(s) "
         f"to {output}",
         file=sys.stderr,
     )
@@ -183,7 +183,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.html or args.html_output:
         html_path = args.html_output or str(Path(output).with_suffix(".html"))
         Path(html_path).write_text(render(report), encoding="utf-8")
-        print(f"sp-audit: wrote HTML report to {html_path}", file=sys.stderr)
+        print(f"spyglass: wrote HTML report to {html_path}", file=sys.stderr)
 
     return 0
 

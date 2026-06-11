@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from sp_audit.single_flight import SingleFlight
+from spyglass.single_flight import SingleFlight
 
 
 def test_concurrent_missers_trigger_exactly_one_fetch() -> None:
