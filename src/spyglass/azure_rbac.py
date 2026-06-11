@@ -122,10 +122,11 @@ def _resolve_role_names_via_arm(guids: set[str]) -> dict[str, str]:
 
     resolved: dict[str, str] = {}
     for definition in definitions:
-        name = definition.get("name")
+        # ARM keys built-in role definitions by GUID in the `name` field.
+        guid = definition.get("name")
         role_name = definition.get("roleName")
-        if name in guids and role_name:
-            resolved[name] = role_name
+        if guid in guids and role_name:
+            resolved[guid] = role_name
     return resolved
 
 
