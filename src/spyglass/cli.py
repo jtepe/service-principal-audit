@@ -102,26 +102,20 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     auth = parser.add_argument_group(
         "Graph authentication",
-        "Selects the Microsoft Graph credential. Service principal (client id + "
-        "secret + tenant) takes precedence, then --managed-identity, otherwise "
-        "the 'az login' user. The Azure RBAC plane always uses 'az login'. "
-        "Each flag falls back to its AZURE_* environment variable.",
+        "Selects the Microsoft Graph credential. A service principal (client id "
+        "+ tenant id + the AZURE_CLIENT_SECRET env var) takes precedence, then "
+        "--managed-identity, otherwise the 'az login' user. The Azure RBAC plane "
+        "always uses 'az login'. The client id and tenant id flags fall back to "
+        "AZURE_CLIENT_ID / AZURE_TENANT_ID; the secret is read only from "
+        "AZURE_CLIENT_SECRET.",
     )
     auth.add_argument(
         "--client-id",
         metavar="ID",
         help=(
             "Service-principal app (client) id, or the client id of a "
-            "user-assigned managed identity (env: AZURE_CLIENT_ID)."
-        ),
-    )
-    auth.add_argument(
-        "--client-secret",
-        metavar="SECRET",
-        help=(
-            "Service-principal client secret (env: AZURE_CLIENT_SECRET). "
-            "Prefer the environment variable: command-line values are visible "
-            "in process listings."
+            "user-assigned managed identity (env: AZURE_CLIENT_ID). The "
+            "matching secret is read from AZURE_CLIENT_SECRET."
         ),
     )
     auth.add_argument(
@@ -156,7 +150,6 @@ async def _run(args: argparse.Namespace) -> int:
     try:
         auth_config = resolve_graph_auth_config(
             client_id=args.client_id,
-            client_secret=args.client_secret,
             tenant_id=args.tenant_id,
             managed_identity=args.managed_identity,
         )
