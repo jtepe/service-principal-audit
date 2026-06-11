@@ -75,7 +75,8 @@ def resolve_graph_auth_config(
 def build_graph_credential(config: GraphAuthConfig) -> AsyncTokenCredential:
     """Select the Graph-plane credential from `config`, by precedence.
 
-    1. Service principal — a `client_secret` (with `client_id` and `tenant_id`).
+    1. Service principal — `client_id` + `tenant_id` plus the `AZURE_CLIENT_SECRET`
+       secret.
     2. Managed identity — when `managed_identity` is set (`client_id` picks a
        user-assigned identity; otherwise system-assigned).
     3. `az login` user — the default when nothing else is configured.
@@ -84,7 +85,11 @@ def build_graph_credential(config: GraphAuthConfig) -> AsyncTokenCredential:
         PreconditionError: on a partial service-principal config, or when
         managed identity is combined with service-principal inputs.
     """
-    has_sp_input = any((config.client_secret, config.tenant_id))
+    # The identity selectors (client/tenant id) signal intent to use a service
+    # principal. The secret is deliberately excluded: it is read only from
+    # AZURE_CLIENT_SECRET, which may be present in the environment for other
+    # tools, so on its own it must not force service-principal auth.
+    has_sp_input = any((config.client_id, config.tenant_id))
 
     if config.managed_identity:
         if config.client_secret or config.tenant_id:
@@ -96,7 +101,7 @@ def build_graph_credential(config: GraphAuthConfig) -> AsyncTokenCredential:
             return ManagedIdentityCredential(client_id=config.client_id)
         return ManagedIdentityCredential()
 
-    if config.client_secret or has_sp_input:
+    if has_sp_input:
         missing = [
             name
             for name, value in (

@@ -57,9 +57,17 @@ def test_managed_identity_user_assigned_uses_client_id():
 
 
 def test_partial_service_principal_config_is_rejected():
-    # A secret without the matching client/tenant id is a misconfiguration.
+    # A client id without the matching secret/tenant id is a misconfiguration.
     with pytest.raises(PreconditionError, match="client id, client secret, and tenant"):
-        build_graph_credential(GraphAuthConfig(client_secret="shh"))
+        build_graph_credential(GraphAuthConfig(client_id="app-id"))
+
+
+def test_ambient_secret_without_identity_falls_back_to_az_login():
+    # AZURE_CLIENT_SECRET may be set in the environment for other tools; on its
+    # own (no client/tenant id) it must not force service-principal auth.
+    credential = build_graph_credential(GraphAuthConfig(client_secret="shh"))
+
+    assert isinstance(credential, AzureCliCredential)
 
 
 def test_managed_identity_with_secret_is_mutually_exclusive():
