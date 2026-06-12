@@ -31,5 +31,5 @@
   <text class="deep" x="185" y="88" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
         font-size="58" font-weight="650" letter-spacing="0.5">Spy<tspan class="accent">glass</tspan></text>
   <text class="muted" x="187" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
-        font-size="19" letter-spacing="0.3">Bring your Entra service principals into focus</text>
+        font-size="19" letter-spacing="0.3">Entra service principals in focus</text>
 </svg>
