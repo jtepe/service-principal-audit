@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 150" width="640" height="150" role="img" aria-label="Spyglass">
+  <style>
+    .deep { fill: #0b3d75; }
+    .accent { fill: #0b6bcb; }
+    .ring { fill: #1f2933; }
+    .muted { fill: #62707d; }
+    @media (prefers-color-scheme: dark) {
+      .deep { fill: #8fbef0; }
+      .accent { fill: #3f97ed; }
+      .ring { fill: #c7d2dc; }
+      .muted { fill: #9aa7b3; }
+    }
+  </style>
+  <!-- spyglass icon -->
+  <g>
+    <g class="accent">
+      <path d="M128 18 L132.5 33 L147 37.5 L132.5 42 L128 57 L123.5 42 L109 37.5 L123.5 33 Z"/>
+      <circle cx="151" cy="20" r="3"/>
+    </g>
+    <g transform="rotate(-35 78 92)">
+      <rect class="deep" x="14" y="83" width="14" height="18" rx="4"/>
+      <rect class="ring" x="28" y="81" width="6" height="22" rx="2.5"/>
+      <rect class="accent" x="34" y="79" width="36" height="26" rx="5"/>
+      <rect class="ring" x="70" y="76" width="6" height="32" rx="2.5"/>
+      <rect class="accent" x="76" y="74" width="40" height="36" rx="6"/>
+      <rect class="deep" x="116" y="70" width="12" height="44" rx="5"/>
+      <rect x="125" y="76" width="4" height="14" rx="2" fill="#9cc4ee"/>
+    </g>
+  </g>
+  <!-- wordmark -->
+  <text class="deep" x="185" y="88" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-size="58" font-weight="650" letter-spacing="0.5">Spy<tspan class="accent">glass</tspan></text>
+  <text class="muted" x="187" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-size="19" letter-spacing="0.3">read-only audits for Entra service principals</text>
+</svg>
