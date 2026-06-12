@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo-wordmark-v2.svg" alt="Spyglass — read-only audits for Entra service principals" width="560">
+  <img src="assets/logo-wordmark-v2.svg" alt="Spyglass — bring your Entra service principals into focus" width="560">
 </p>
 
 A read-only spyglass for Microsoft Entra service principals: a CLI that, for a
